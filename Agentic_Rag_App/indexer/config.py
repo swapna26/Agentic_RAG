@@ -18,11 +18,6 @@ class IndexerConfig:
             'postgresql://raguser:ragpassword@localhost:5432/agentic_rag'
         )
         
-        # Gemini API
-        # self.gemini_api_key = os.getenv('GEMINI_API_KEY', 'your_actual_gemini_api_key_here')
-        # self.gemini_model = os.getenv('GEMINI_MODEL', 'gemini-1.5-flash')
-        # self.gemini_embedding_model = os.getenv('GEMINI_EMBEDDING_MODEL', 'models/text-embedding-004')
-        
         # Phoenix
         self.phoenix_base_url = os.getenv('PHOENIX_BASE_URL', 'http://localhost:6006')
         self.phoenix_project_name = os.getenv('PHOENIX_PROJECT_NAME', 'agentic_rag_indexer')
@@ -30,7 +25,7 @@ class IndexerConfig:
         # Document processing
         self.documents_path = os.getenv('DOCUMENTS_PATH', './documents')
         self.chunk_size = int(os.getenv('CHUNK_SIZE', '768'))
-        self.chunk_overlap = int(os.getenv('CHUNK_OVERLAP', '150'))
+        self.chunk_overlap = int(os.getenv('CHUNK_OVERLAP', '128'))
         
         # Processing
         self.batch_size = int(os.getenv('BATCH_SIZE', '10'))
@@ -62,9 +57,7 @@ class IndexerConfig:
         if not self.database_url.startswith(('postgresql://', 'postgresql+psycopg2://')):
             raise ValueError('DATABASE_URL must be a PostgreSQL connection string')
         
-        # if self.gemini_api_key == 'your_actual_gemini_api_key_here':
-        #     print("Warning: GEMINI_API_KEY not set. Please set it in your .env file")
-
+        
 
 # Global config instance
 config = IndexerConfig()

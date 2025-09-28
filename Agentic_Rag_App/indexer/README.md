@@ -22,8 +22,8 @@ ollama pull nomic-embed-text:v1.5
 ```env
 DATABASE_URL=postgresql://raguser:ragpassword@localhost:5432/agentic_rag
 DOCUMENTS_PATH=./documents
-CHUNK_SIZE=3000
-CHUNK_OVERLAP=200
+CHUNK_SIZE=768
+CHUNK_OVERLAP=128
 BATCH_SIZE=10
 ```
 

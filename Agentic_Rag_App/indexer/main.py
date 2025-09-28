@@ -30,7 +30,7 @@ from utils.phoenix_client import PhoenixClient
 class StandaloneConfig:
     """Standalone configuration for indexer without external dependencies."""
     chunk_size = 768
-    chunk_overlap = 150
+    chunk_overlap = 120
     documents_path = str(Path(__file__).parent.parent / "documents")
     database_url = "postgresql://raguser:ragpassword@localhost:5432/agentic_rag"
     batch_size = 5

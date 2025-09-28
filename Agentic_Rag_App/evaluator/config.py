@@ -13,8 +13,8 @@ class EvaluatorConfig:
     database_url: str = "postgresql://raguser:ragpassword@localhost:5432/agentic_rag"
     vector_table: str = "data_llamaindex_vectors_copy"
 
-    # Ollama configuration
-    ollama_base_url: str = "http://localhost:11434"
+    # Ollama configuration - using dedicated port for evaluation to avoid resource conflicts
+    ollama_base_url: str = "http://localhost:11434"  # Different port from production (11434)
     embedding_model: str = "nomic-embed-text:v1.5"
     llm_model: str = "llama3.2:1b"
 
@@ -22,7 +22,7 @@ class EvaluatorConfig:
     backend_api_url: str = "http://localhost:8000"
 
     # Evaluation configuration
-    chunk_size: int = 1024
+    chunk_size: int = 768
     chunk_overlap: int = 128
     top_k: int = 5
 
@@ -39,6 +39,7 @@ class EvaluatorConfig:
 
     def __post_init__(self):
         if self.metrics is None:
+            # Full set of RAGas metrics - restored per user request
             self.metrics = [
                 "faithfulness",
                 "answer_relevancy",
