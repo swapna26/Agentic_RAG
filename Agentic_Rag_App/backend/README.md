@@ -4,13 +4,12 @@ Production-ready FastAPI backend for Retrieval-Augmented Generation with integra
 
 ## Processing Flow
 
-1) CrewAI (primary): multi-agent retrieval + answer generation
-2) Chat engine (fallback): LlamaIndex chat with memory
-3) Query engine (final fallback): direct RAG query
+The system processes user queries using CrewAI multi-agent system for intelligent document retrieval and response generation.
 
 Context handling:
-- Recent turns are included only when the new question overlaps the prior topic (heuristic)
-- New-topic questions are answered standalone (no contamination)
+- Conversation history is provided to agents for context-aware responses
+- Agents intelligently determine relevance and handle topic transitions
+- Clean separation between new topics and follow-up questions
 
 ## Endpoints (OpenAI compatible)
 
@@ -61,20 +60,33 @@ docker compose --profile backend up -d
 
 ## Evaluation (RAGas)
 
-Run in 3 batches to avoid timeouts on Ollama:
+**Current Setup (Ollama Llama3.2:1b):**
+Run in 3 batches to avoid timeouts:
 1) `answer_similarity`, `context_recall`
 2) `faithfulness`, `answer_relevancy`
 3) `context_precision`, `answer_correctness`
 
 Merge the three reports into one combined JSON.
 
+**Evaluation Challenges:**
+- Some LLM-heavy metrics (relevancy, precision, correctness) face compatibility issues with Llama3.2:1b on Ollama
+- Current model has limitations with complex evaluation tasks
+- Timeout issues require batched evaluation approach
+
+**Scalability Potential:**
+With better infrastructure and larger LLM models (e.g., Llama3.2:7b+), significant accuracy improvements would be achievable across all RAGas metrics without timeout constraints.
+
 ## Troubleshooting (current)
 
-- Some LLM-heavy metrics (relevancy, precision, correctness) may time out on Ollama
-- Use batched evaluation and merge results
-- Ensure models are pulled:
-  - `ollama pull llama3.2:1b`
-  - `ollama pull nomic-embed-text:v1.5`
+**Model & Infrastructure:**
+- Ensure models are pulled: `ollama pull llama3.2:1b` and `ollama pull nomic-embed-text:v1.5`
+- Llama3.2:1b chosen for resource efficiency over larger models (3b, 7b, 70b)
+
+**RAGas Evaluation:**
+- LLM-heavy metrics (relevancy, precision, correctness) may timeout on Ollama
+- Some metrics have compatibility issues with local Ollama setup
+- Use batched evaluation and merge results as workaround
+- Production deployments with cloud LLMs (GPT-4, Claude) would eliminate these constraints
 
 ## Architecture Overview
 
@@ -88,19 +100,11 @@ The backend implements an intelligent chatbot system with conversation memory an
                                 │
                                 ▼
                        ┌──────────────────┐
-                       │ Conversation     │
-                       │ Memory Engine    │
+                       │    CrewAI        │
+                       │  Multi-Agent     │
+                       │   Processing     │
                        └──────────────────┘
                                 │
-                    ┌───────────┼───────────┐
-                    ▼           ▼           ▼
-            ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
-            │  CrewAI      │ │ Chat Engine  │ │ Query Engine │
-            │  Agents      │ │ (Fallback)   │ │ (Final)      │
-            │ (Primary)    │ │              │ │              │
-            └──────────────┘ └──────────────┘ └──────────────┘
-                    │           │           │
-                    └───────────┼───────────┘
                                 ▼
                        ┌──────────────────┐
                        │   Ollama LLM     │
@@ -110,9 +114,8 @@ The backend implements an intelligent chatbot system with conversation memory an
 
 ## Key Features
 
-- **CrewAI Multi-Agent Processing**: Primary intelligent processing with specialized agents
-- **Conversation Memory**: Automatic context management with LlamaIndex ChatMemoryBuffer
-- **Intelligent Fallback**: Graceful degradation from CrewAI → Chat Engine → Query Engine
+- **CrewAI Multi-Agent Processing**: Intelligent processing with specialized retrieval and response agents
+- **Conversation Memory**: Persistent context management with PostgreSQL storage
 - **OpenWebUI Integration**: Seamless chat interface with OpenAI API compatibility
 - **Context-Aware Responses**: Follow-up questions answered with full conversation context
 - **Production Ready**: Comprehensive error handling, logging, and monitoring
@@ -124,49 +127,33 @@ The backend implements an intelligent chatbot system with conversation memory an
 **Primary Processing System** with specialized agent roles:
 
 **Agent Team:**
-- **Query Analyzer** - Analyzes conversation context and determines search strategy
-- **Document Retrieval Specialist** - Context-aware document search using vector store
-- **Information Extractor** - Synthesizes responses based on retrieved documents
-- **Response Formatter** - Ensures proper formatting and completeness
+- **Document Retrieval Specialist** - Finds relevant documents from the knowledge base using domain-aware search
+- **Document-Based Response Writer** - Writes helpful answers using retrieved documents and conversation context
 
 **Processing Flow:**
-1. **Query Analysis** - Understands conversation context and question type
-2. **Document Retrieval** - Searches vector store for relevant documents
-3. **Information Extraction** - Extracts specific information from documents
-4. **Response Formatting** - Formats final response with proper structure
+1. **Document Retrieval** - Agent searches vector store for relevant documents using domain-aware keywords
+2. **Response Generation** - Agent creates contextually appropriate answers from retrieved documents
 
 ### RAG Service (`services/rag_service.py`)
 
-**Three-Tier Processing Architecture:**
+**CrewAI Multi-Agent Processing:**
 
-**Tier 1: CrewAI Agents (Primary)**
-- Intelligent multi-agent processing
-- Context-aware document retrieval
-- Specialized agent roles for different tasks
-- Processing time: 10-30 seconds
-
-**Tier 2: Chat Engine (Fallback)**
-- LlamaIndex conversation memory
-- Context-aware responses
-- Fast processing: 1-5 seconds
-- Used when CrewAI fails
-
-**Tier 3: Query Engine (Final Fallback)**
-- Direct RAG without conversation context
-- Simple document retrieval
-- Fastest processing: 1-2 seconds
-- Used when all other methods fail
+- Intelligent multi-agent system for document analysis
+- Context-aware conversation handling
+- Specialized agents for retrieval and response generation
+- Integrated with PostgreSQL for conversation memory
+- Processing time: 10-30 seconds for comprehensive analysis
 
 ### Conversation Memory System
 
 **Memory Components:**
-- **ChatMemoryBuffer**: LlamaIndex conversation state management
 - **PostgreSQL Storage**: Persistent conversation history across sessions
-- **Context Population**: Automatic conversion from OpenWebUI format
+- **Context Management**: Automatic extraction and formatting from OpenWebUI messages
+- **Agent Integration**: Conversation context provided to CrewAI agents for intelligent responses
 
 **Memory Flow:**
 ```
-OpenWebUI Messages → Conversation History → ChatMemoryBuffer → CrewAI Agents → Context-Aware Response
+OpenWebUI Messages → PostgreSQL Storage → Context Extraction → CrewAI Agents → Context-Aware Response
 ```
 
 ### Chat Router (`routers/chat.py`)
@@ -194,33 +181,28 @@ OpenWebUI Messages → Conversation History → ChatMemoryBuffer → CrewAI Agen
    └── Previous Context: [{"role": "user", "content": "What is procurement?"}, ...]
    │
    ▼
-3. Populate Chat Memory
-   └── ChatMemoryBuffer.put(previous_messages)
+3. Store Conversation Context
+   └── PostgreSQL.store(conversation_history)
    │
    ▼
-4. Three-Tier Processing
-   ├── Tier 1: CrewAI Agents (Primary)
-   │   ├── Query Analyzer: "FOLLOW_UP - search for procurement summary"
-   │   ├── Document Retrieval: Search vector store for procurement docs
-   │   ├── Information Extractor: Extract summary information
-   │   └── Response Formatter: Format 3-line summary
-   ├── Tier 2: Chat Engine (Fallback)
-   │   └── Context-aware retrieval and response
-   └── Tier 3: Query Engine (Final Fallback)
-       └── Direct document retrieval
+4. CrewAI Multi-Agent Processing
+   ├── Query Analyzer: "FOLLOW_UP - search for procurement summary"
+   ├── Document Retrieval: Search vector store for procurement docs
+   ├── Information Extractor: Extract summary information
+   └── Response Formatter: Format 3-line summary
    │
    ▼
 5. Intelligent Response
    └── LLM automatically relates current question to previous context
 ```
 
-### Processing Modes
+### Processing Details
 
-| Mode | Trigger | Memory | Speed | Use Case |
-|------|---------|--------|-------|----------|
-| CrewAI Agents | Default | Full | Medium (10-30s) | Complex analysis, intelligent processing |
-| Chat Engine | CrewAI fails | Full | Fast (1-5s) | Conversational Q&A |
-| Query Engine | All fail | None | Fast (1-2s) | Simple retrieval |
+| Component | Function | Memory | Speed | Use Case |
+|-----------|----------|--------|-------|----------|
+| CrewAI Agents | Multi-agent processing | Full context | 10-30s | Intelligent document analysis and conversation |
+| PostgreSQL | Conversation storage | Persistent | Fast | Context retrieval and history management |
+| Vector Store | Document retrieval | Embedding-based | Fast | Semantic document search |
 
 ## Getting Started
 

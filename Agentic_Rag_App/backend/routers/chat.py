@@ -20,7 +20,6 @@ import time
 import uuid
 from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 import structlog
 
@@ -101,7 +100,6 @@ async def chat_completions(request: ChatCompletionRequest, http_request: Request
     - CrewAI multi-agent processing
     - Conversation memory management
     - Source document retrieval
-    - Streaming and non-streaming responses
     - Phoenix observability integration
 
     Args:
@@ -158,21 +156,8 @@ async def chat_completions(request: ChatCompletionRequest, http_request: Request
                    conversation_id=conversation_id,
                    message_count=len(request.messages))
         
-        if request.stream:
-            response = StreamingResponse(
-                stream_chat_response(rag_service, latest_message, conversation_history, request, conversation_id),
-                media_type="text/event-stream",
-                headers={
-                    "Cache-Control": "no-cache",
-                    "Connection": "keep-alive",
-                    "Content-Type": "text/event-stream",
-                    "Access-Control-Allow-Origin": "*",
-                    "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-                    "Access-Control-Allow-Headers": "*"
-                }
-            )
-        else:
-            response = await non_stream_chat_response(rag_service, latest_message, conversation_history, request, conversation_id)
+        # Always use non-streaming response
+        response = await non_stream_chat_response(rag_service, latest_message, conversation_history, request, conversation_id)
 
         # Finalize trace
         if span:
@@ -221,7 +206,7 @@ async def non_stream_chat_response(rag_service, message: str, conversation_histo
                 elif metadata is None:
                     metadata = {}
 
-                doc_name = metadata.get("file_name") or metadata.get("filename") or metadata.get("source_document") or f"Document {i}"
+                doc_name = metadata.get("file_name") or metadata.get("filename") or metadata.get("source_document") or metadata.get("source_file") or f"Document {i}"
                 score = source.get("score", 0.0)
                 response_content += f"\n{i}. {doc_name} (relevance: {score:.2f})"
         
@@ -302,110 +287,6 @@ async def non_stream_chat_response(rag_service, message: str, conversation_histo
         logger.error("Non-streaming response failed", error=str(e), exc_info=True)
         raise HTTPException(status_code=500, detail=f"Response generation failed: {str(e)}")
 
-async def stream_chat_response(rag_service, message: str, conversation_history: List[Dict], request: ChatCompletionRequest, conversation_id: str):
-    """Generate streaming chat response with RAG."""
-    try:
-        completion_id = f"chatcmpl-{uuid.uuid4()}"
-        created = int(time.time())
-        
-        # Send initial chunk
-        initial_chunk = {
-            "id": completion_id,
-            "object": "chat.completion.chunk",
-            "created": created,
-            "model": request.model,
-            "choices": [
-                {
-                    "index": 0,
-                    "delta": {"role": "assistant", "content": ""},
-                    "finish_reason": None
-                }
-            ]
-        }
-        yield f"data: {json.dumps(initial_chunk)}\n\n"
-        
-        # Get the full response from RAG with conversation history
-        result = await rag_service.chat(message, conversation_history, conversation_id)
-        response_text = result["response"]
-        
-        # Add source information
-        sources = result.get("sources", [])
-        if sources:
-            response_text += "\n\n# Sources"
-            for i, source in enumerate(sources[:3], 1):
-                metadata = source.get("metadata", {})
-                doc_name = metadata.get("file_name") or metadata.get("filename") or metadata.get("source_document") or f"Document {i}"
-                score = source.get("score", 0.0)
-                response_text += f"\n{i}. {doc_name} (relevance: {score:.2f})"
-        
-        # Stream the response in chunks
-        chunk_size = 15  # Words per chunk for smooth streaming
-        words = response_text.split()
-        
-        for i in range(0, len(words), chunk_size):
-            chunk_words = words[i:i + chunk_size]
-            chunk_text = " ".join(chunk_words)
-            
-            # Add space after chunk unless it's the last chunk
-            if i + chunk_size < len(words):
-                chunk_text += " "
-            
-            chunk_data = {
-                "id": completion_id,
-                "object": "chat.completion.chunk",
-                "created": created,
-                "model": request.model,
-                "choices": [
-                    {
-                        "index": 0,
-                        "delta": {"content": chunk_text},
-                        "finish_reason": None
-                    }
-                ]
-            }
-            yield f"data: {json.dumps(chunk_data)}\n\n"
-        
-        # Send final chunk
-        final_chunk = {
-            "id": completion_id,
-            "object": "chat.completion.chunk",
-            "created": created,
-            "model": request.model,
-            "choices": [
-                {
-                    "index": 0,
-                    "delta": {},
-                    "finish_reason": "stop"
-                }
-            ]
-        }
-        yield f"data: {json.dumps(final_chunk)}\n\n"
-        yield "data: [DONE]\n\n"
-        
-        logger.info("Streaming response completed", 
-                   response_length=len(result["response"]),
-                   source_count=len(sources),
-                   conversation_id=conversation_id)
-        
-    except Exception as e:
-        logger.error("Streaming response failed", error=str(e), exc_info=True)
-        
-        # Send error chunk
-        error_chunk = {
-            "id": f"chatcmpl-{uuid.uuid4()}",
-            "object": "chat.completion.chunk",
-            "created": int(time.time()),
-            "model": request.model,
-            "choices": [
-                {
-                    "index": 0,
-                    "delta": {"content": f"\n\nError: {str(e)}"},
-                    "finish_reason": "stop"
-                }
-            ]
-        }
-        yield f"data: {json.dumps(error_chunk)}\n\n"
-        yield "data: [DONE]\n\n"
 
 @router.get("/chat/models")
 async def get_chat_models():

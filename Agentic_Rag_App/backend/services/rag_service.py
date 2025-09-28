@@ -1,24 +1,14 @@
 """
-Agentic RAG Service with CrewAI Integration
+RAG Service with CrewAI Integration
 
-This module provides the core RAG (Retrieval Augmented Generation) service with intelligent
-agentic capabilities using CrewAI. It serves as the primary interface for processing user
-queries with advanced document retrieval and response generation.
-
-Key Features:
-- CrewAI agents as primary processing engine
-- PostgreSQL vector store integration
-- Conversation memory management
-- Rate limiting and error handling
-- Phoenix observability integration
-
-Version: 1.0.0
+Core RAG service for document retrieval and response generation using CrewAI agents.
+Integrates with PostgreSQL vector store and manages conversation context.
 """
 
 import asyncio
 import time
 import re
-from typing import List, Dict, Any, Optional, AsyncGenerator
+from typing import List, Dict, Any, Optional
 import structlog
 from llama_index.core import VectorStoreIndex, StorageContext
 from llama_index.vector_stores.postgres import PGVectorStore
@@ -29,75 +19,52 @@ from llama_index.llms.ollama import Ollama
 from config import BackendConfig
 from services.conversation_service import ConversationService
 
+# Removed guardrails imports - keeping system simple
+
 logger = structlog.get_logger()
 
 
 class RAGService:
     """
-    Agentic RAG Service with CrewAI Integration
-    
-    This service provides intelligent document retrieval and response generation using
-    CrewAI agents as the primary processing engine. It integrates with PostgreSQL for
-    vector storage and conversation management.
-    
-    Architecture:
-    1. CrewAI Agents (Primary) - Intelligent query processing
-    2. Chat Engine (Fallback) - LlamaIndex conversation memory
-    3. Query Engine (Final Fallback) - Basic RAG functionality
-    
-    Features:
-    - Multi-agent processing with specialized roles
-    - Conversation memory and context management
-    - Rate limiting and error handling
-    - Phoenix observability integration
-    - PostgreSQL vector store integration
+    RAG Service with CrewAI Integration
+
+    Provides document retrieval and response generation using CrewAI agents.
+    Integrates with PostgreSQL vector store and manages conversation context.
     """
     
     def __init__(self, config: BackendConfig):
         """Initialize the RAG service with configuration."""
         self.config = config
         
-        # Core RAG components
+        # Core components
         self.vector_store = None
         self.index = None
-        self.query_engine = None
-        self.chat_engine = None
         self.embedding_model = None
         self.llm = None
-        self.memory = None
         self.is_initialized = False
-        
-        # CrewAI agents (Primary processing engine)
+
+        # CrewAI agents
         self.crew_agents = None
-        
+
         # External services
-        self.phoenix_service = None  # Injected from main.py
-        self.conversation_service = None  # PostgreSQL conversation storage
-        
-        # Enhanced rate limiting configuration for llama3.2:1b
+        self.phoenix_service = None
+        self.conversation_service = None
+
+        # Rate limiting
         self.last_request_time = 0
-        self.min_request_interval = getattr(config, 'ollama_min_request_interval', 0.5)  # Increased from 0.1s to 0.5s
+        self.min_request_interval = 0.5
         self.request_count = 0
         self.request_window_start = time.time()
-        self.max_requests_per_minute = getattr(config, 'ollama_requests_per_minute', 30)  # Reduced from 100 to 30
-        self.max_retries = getattr(config, 'ollama_retry_attempts', 2)  # Reduced from 3 to 2
-        self.retry_delay = getattr(config, 'ollama_retry_delay', 1)  # Reduced from 2s to 1s
+        self.max_requests_per_minute = 30
+        self.max_retries = 2
+        self.retry_delay = 1
+
+        # Backup query engine (if needed)
+        # self.query_engine = None
+
     
     async def initialize(self):
-        """
-        Initialize the RAG service with all required components.
-        
-        This method sets up:
-        1. PostgreSQL vector store connection
-        2. Ollama embedding and LLM models
-        3. LlamaIndex vector store index
-        4. Chat engine with conversation memory
-        5. CrewAI agents for intelligent processing
-        6. Conversation service for PostgreSQL storage
-        
-        Returns:
-            bool: True if initialization successful, False otherwise
-        """
+        """Initialize the RAG service components."""
         try:
             logger.info("Initializing Agentic RAG service with CrewAI integration")
 
@@ -131,7 +98,7 @@ class RAGService:
                 user=self._extract_user(self.config.database_url),
                 password=self._extract_password(self.config.database_url),
                 table_name="llamaindex_vectors_copy",
-                embed_dim=768,  # nomic-embed-text:v1.5 dimension
+                embed_dim=768,  # Match the actual database embedding dimensions
                 perform_setup=False,  # Don't try to create table - it already exists
                 # Enable debugging to see what's happening
                 debug=True,
@@ -167,7 +134,7 @@ class RAGService:
                 )
                 logger.info("Chat engine initialized successfully (using PostgreSQL for conversation memory)")
             except Exception as e:
-                logger.warning("Failed to initialize chat engine, will use query engine fallback", error=str(e))
+                logger.warning("Failed to initialize chat engine", error=str(e))
                 self.chat_engine = None
 
             # Initialize conversation service
@@ -188,18 +155,19 @@ class RAGService:
         """Initialize CrewAI agents."""
         try:
             from agents.crew_agents import RAGCrew
-            
+
             # Initialize full CrewAI setup
             self.crew_agents = RAGCrew(self, self.config)
-            
+
             # Crew agents initialized above
-            
+
             logger.info("CrewAI agents initialized successfully")
-            
+
         except Exception as e:
             logger.warning("Failed to initialize CrewAI agents", error=str(e))
             # Continue without agents - fall back to regular RAG
-    
+
+
     async def _check_rate_limit(self):
         """Check and enforce rate limiting."""
         current_time = time.time()
@@ -304,67 +272,6 @@ class RAGService:
             logger.error("Failed to get conversation context", error=str(e))
             return ""
 
-    def _should_include_context(self, question: str, conversation_history: List[Dict]) -> bool:
-        """Simple context inclusion logic - let agents handle context understanding."""
-        # Always include context if conversation history exists - agents are smart enough
-        # to determine what's relevant vs. what's a new topic
-        return bool(conversation_history)
-
-    def _prepare_contextual_query(self, question: str, conversation_history: List[Dict]) -> str:
-        """Prepare query with proper conversational context for CrewAI agents."""
-        # Check if this is a follow-up question
-        follow_up_indicators = [
-            "above", "previous", "that", "this", "it", "them", "those",
-            "list", "summarize", "bullet points", "key points", "main points",
-            "can you", "could you", "please", "also", "what about", "how about"
-        ]
-
-        question_lower = question.lower()
-        is_followup = any(indicator in question_lower for indicator in follow_up_indicators)
-
-        # If not a follow-up, return simple question
-        if not is_followup or not conversation_history:
-            return question
-
-        # Get the last meaningful Q&A exchange
-        last_qa = self._get_last_qa_pair(conversation_history)
-        if not last_qa:
-            return question
-
-        # Create contextual query for CrewAI agents
-        contextual_query = f"""CONVERSATION CONTEXT:
-Previous Question: {last_qa['question']}
-Previous Answer: {last_qa['answer'][:500]}...
-
-CURRENT FOLLOW-UP QUESTION: {question}
-
-NOTE: This is a follow-up question referring to the previous answer. Please use the context above to understand what the user is asking about."""
-
-        return contextual_query
-
-    def _get_last_qa_pair(self, conversation_history: List[Dict]) -> Dict:
-        """Extract the most recent question-answer pair."""
-        if len(conversation_history) < 2:
-            return None
-
-        # Look for the last user question and assistant answer
-        last_user = None
-        last_assistant = None
-
-        for msg in reversed(conversation_history):
-            if msg.get("role") == "assistant" and not last_assistant:
-                last_assistant = msg.get("content", "")
-            elif msg.get("role") == "user" and not last_user and last_assistant:
-                last_user = msg.get("content", "")
-                break
-
-        if last_user and last_assistant:
-            return {
-                "question": last_user,
-                "answer": last_assistant
-            }
-
-        return None
 
     def _clean_conversation_context(self, raw_context: str) -> str:
         """Clean conversation context to remove meta-commentary and focus on substance."""
@@ -440,62 +347,9 @@ NOTE: This is a follow-up question referring to the previous answer. Please use 
         except Exception as e:
             logger.error("Failed to add message to conversation", error=str(e))
 
-    async def _manual_vector_search(self, question: str, top_k: int = 5) -> List[Dict[str, Any]]:
-        """Perform manual vector similarity search as fallback."""
-        try:
-            import asyncpg
-
-            # Get embedding for the query
-            query_embedding = self.embedding_model.get_text_embedding(question)
-            query_vector = f"[{','.join(map(str, query_embedding))}]"
-
-            # Connect to database
-            conn = await asyncpg.connect(self.config.database_url)
-
-            try:
-                # Search with cosine similarity
-                sql = """
-                SELECT
-                    text,
-                    metadata_,
-                    node_id,
-                    1 - (embedding <=> $1::vector) as similarity
-                FROM data_llamaindex_vectors_copy
-                ORDER BY embedding <=> $1::vector
-                LIMIT $2
-                """
-
-                results = await conn.fetch(sql, query_vector, top_k)
-
-                sources = []
-                for row in results:
-                    # Create a source entry
-                    source_info = {
-                        "content": row['text'][:200] + "..." if len(row['text']) > 200 else row['text'],
-                        "score": float(row['similarity']),
-                        "metadata": row['metadata_'] if row['metadata_'] else {},
-                        "node_id": row['node_id'],
-                        "text": row['text']  # Full text for context
-                    }
-                    sources.append(source_info)
-
-                return sources
-
-            finally:
-                await conn.close()
-
-        except Exception as e:
-            logger.error("Manual vector search failed", error=str(e))
-            return []
-
     async def chat(self, question: str, conversation_history: List[Dict], conversation_id: Optional[str] = None) -> Dict[str, Any]:
         """
-        Process user query using intelligent agentic RAG system.
-        
-        This method implements a three-tier processing approach:
-        1. CrewAI Agents (Primary) - Intelligent multi-agent processing
-        2. Chat Engine (Fallback) - LlamaIndex conversation memory
-        3. Query Engine (Final Fallback) - Basic RAG functionality
+        Process user query using intelligent agentic RAG system with CrewAI agents.
         
         Args:
             question (str): User's question or query
@@ -570,13 +424,41 @@ NOTE: This is a follow-up question referring to the previous answer. Please use 
                     }
                 )
 
-            # Use CrewAI agents as primary service
+            # Use CrewAI agents
             if self.crew_agents:
                 try:
-                    logger.info("Using simplified CrewAI agents")
+                    logger.info("🚀 Starting CrewAI agent processing",
+                               question=question[:50],
+                               has_crew_agents=True)
 
-                    # Enhanced context processing for CrewAI agents
-                    query_to_process = self._prepare_contextual_query(question, conversation_history)
+                    # Always provide context if we have conversation history
+                    # Let the agents decide what's relevant vs what's a new topic
+                    if conversation_history and len(conversation_history) > 0:
+                        # Only get the last exchange for context
+                        last_exchange = []
+                        for msg in reversed(conversation_history[-4:]):  # Last 2 exchanges max
+                            last_exchange.insert(0, msg)
+                            if len(last_exchange) >= 4:  # 2 full exchanges
+                                break
+
+                        context_str = ""
+                        for msg in last_exchange:
+                            role = msg.get("role", "")
+                            content = msg.get("content", "")
+                            if role and content:
+                                context_str += f"{role.title()}: {content[:200]}...\n"
+
+                        query_to_process = f"""CONVERSATION CONTEXT:
+{context_str}
+
+CURRENT QUESTION: {question}
+
+Instructions: This question may be related to our previous conversation or it may be completely new. Analyze the context and current question to determine the best approach."""
+                        logger.info("🔗 Adding conversation context to query")
+                    else:
+                        # No conversation history available
+                        query_to_process = question
+                        logger.info("🆕 Processing as new question (no conversation history)")
 
                     # Process with timeout protection
                     result = await asyncio.wait_for(
@@ -587,12 +469,12 @@ NOTE: This is a follow-up question referring to the previous answer. Please use 
                     # Add to conversation history if conversation_id provided
                     if conversation_id:
                         await self._add_to_conversation(
-                            conversation_id, "user", question, processing_mode="crew_ai_primary"
+                            conversation_id, "user", question, processing_mode="crew_ai"
                         )
                         await self._add_to_conversation(
                             conversation_id, "assistant", result['response'],
                             sources=result.get('sources', []),
-                            processing_mode="crew_ai_primary_response"
+                            processing_mode="crew_ai_response"
                         )
 
                     # Ensure metadata is properly set
@@ -602,7 +484,7 @@ NOTE: This is a follow-up question referring to the previous answer. Please use 
                         "model": self.config.ollama_model,
                         "conversation_id": conversation_id,
                         "source_count": len(result.get('sources', [])),
-                        "processing_mode": "crew_ai_primary",
+                        "processing_mode": "crew_ai",
                         "has_conversation_context": len(conversation_history) > 0
                     })
 
@@ -619,123 +501,66 @@ NOTE: This is a follow-up question referring to the previous answer. Please use 
                     return result
 
                 except Exception as e:
-                    logger.warning("CrewAI agents failed, falling back to chat engine", error=str(e))
-
-            # Fallback to chat engine with conversation memory if available
-            if self.chat_engine:
-                try:
-                    logger.info("Using chat engine as fallback with conversation memory")
-
-                    # Use the chat engine that maintains conversation context
-                    response = await asyncio.to_thread(
-                        self.chat_engine.chat,
-                        question
-                    )
-
-                    # Extract source information
-                    sources = []
-                    if hasattr(response, 'source_nodes') and response.source_nodes:
-                        for node in response.source_nodes:
-                            source_info = {
-                                "content": node.text[:200] + "..." if len(node.text) > 200 else node.text,
-                                "score": float(node.score) if hasattr(node, 'score') else 1.0,
-                                "metadata": node.metadata
-                            }
-                            sources.append(source_info)
-
-                    response_text = str(response.response)
-
-                    # Add to conversation history if conversation_id provided
-                    if conversation_id:
-                        await self._add_to_conversation(
-                            conversation_id, "user", question, processing_mode="chat_engine_fallback"
-                        )
-                        await self._add_to_conversation(
-                            conversation_id, "assistant", response_text,
-                            sources=sources,
-                            processing_mode="chat_engine_fallback_response"
-                        )
-
+                    logger.error("CrewAI agents failed", error=str(e))
+                    # Return error response instead of falling back
                     result = {
-                        "response": response_text,
-                        "sources": sources,
+                        "response": "I apologize, but I'm currently experiencing issues with the AI agents. Please try again in a moment.",
+                        "sources": [],
                         "metadata": {
                             "model": self.config.ollama_model,
                             "conversation_id": conversation_id,
-                            "source_count": len(sources),
-                            "processing_mode": "chat_engine_fallback",
-                            "has_conversation_context": len(conversation_history) > 0
+                            "source_count": 0,
+                            "processing_mode": "crew_ai_error",
+                            "error": str(e)
                         }
                     }
-
-                    # Log to Phoenix if available
-                    if self.phoenix_service:
-                        await self.phoenix_service.log_chat_interaction(
-                            conversation_id or "unknown",
-                            question,
-                            result["response"],
-                            sources,
-                            result.get("metadata", {})
-                        )
-
                     return result
 
-                except Exception as e:
-                    logger.warning("Chat engine fallback also failed", error=str(e))
 
-            # Final fallback to regular query engine
-            logger.info("Using fallback query engine")
-            response = await asyncio.to_thread(
-                self.query_engine.query,
-                question
-            )
+            # Backup query engine option (if needed) - COMMENTED OUT
+            # logger.info("Using backup query engine")
+            # response = await asyncio.to_thread(
+            #     self.query_engine.query,
+            #     question
+            # )
 
-            # Extract source information
-            sources = []
-            if hasattr(response, 'source_nodes') and response.source_nodes:
-                for node in response.source_nodes:
-                    source_info = {
-                        "content": node.text[:200] + "..." if len(node.text) > 200 else node.text,
-                        "score": float(node.score) if hasattr(node, 'score') else 1.0,
-                        "metadata": node.metadata
-                    }
-                    sources.append(source_info)
+            # Extract source information - COMMENTED OUT
+            # sources = []
+            # if hasattr(response, 'source_nodes') and response.source_nodes:
+            #     for node in response.source_nodes:
+            #         source_info = {
+            #             "content": node.text[:200] + "..." if len(node.text) > 200 else node.text,
+            #             "score": float(node.score) if hasattr(node, 'score') else 1.0,
+            #             "metadata": node.metadata
+            #         }
+            #         sources.append(source_info)
 
-            response_text = str(response.response)
+            # response_text = str(response.response)
 
-            result = {
-                "response": response_text,
-                "sources": sources,
+            # result = {
+            #     "response": response_text,
+            #     "sources": sources,
+            #     "metadata": {
+            #         "model": self.config.ollama_model,
+            #         "conversation_id": conversation_id,
+            #         "source_count": len(sources),
+            #         "processing_mode": "fallback_query_engine",
+            #         "has_conversation_context": len(conversation_history) > 0
+            #     }
+            # }
+
+            # This should never be reached since we only use CrewAI agents now
+            logger.error("No agents available for processing")
+            return {
+                "response": "System configuration error - no processing method available",
+                "sources": [],
                 "metadata": {
                     "model": self.config.ollama_model,
                     "conversation_id": conversation_id,
-                    "source_count": len(sources),
-                    "processing_mode": "fallback_query_engine",
-                    "has_conversation_context": len(conversation_history) > 0
+                    "source_count": 0,
+                    "processing_mode": "configuration_error"
                 }
             }
-
-            # Log to Phoenix if available
-            if self.phoenix_service:
-                await self.phoenix_service.log_chat_interaction(
-                    conversation_id or "unknown",
-                    question,
-                    result["response"],
-                    sources,
-                    result.get("metadata", {})
-                )
-
-            # End tracing span
-            if trace_span:
-                trace_span.set_attribute("response.length", len(result["response"]))
-                trace_span.set_attribute("sources.count", len(sources))
-                trace_span.end()
-
-            logger.info("Chat processed successfully",
-                       response_length=len(result["response"]),
-                       source_count=len(sources))
-
-            return result
 
         except Exception as e:
             logger.error("Chat processing failed", error=str(e))
@@ -745,423 +570,6 @@ NOTE: This is a follow-up question referring to the previous answer. Please use 
         """Legacy query method - redirects to chat with empty history."""
         return await self.chat(question, [], conversation_id)
 
-    async def query_legacy(self, question: str, conversation_id: Optional[str] = None, use_agents: bool = True) -> Dict[str, Any]:
-        """Original query method preserved for backward compatibility."""
-        if not self.is_initialized:
-            raise RuntimeError("RAG service not initialized")
-
-        try:
-            logger.info("Processing query", question=question[:100], use_agents=use_agents)
-
-            # Check if this is a greeting and handle it without agents
-            if self._is_greeting(question):
-                logger.info("Detected greeting message, responding directly")
-                greeting_response = self._get_greeting_response()
-
-                # Add to conversation history if conversation_id provided
-                if conversation_id:
-                    await self._add_to_conversation(
-                        conversation_id, "user", question, processing_mode="greeting_request"
-                    )
-                    await self._add_to_conversation(
-                        conversation_id, "assistant", greeting_response, processing_mode="greeting_response"
-                    )
-
-                result = {
-                    "response": greeting_response,
-                    "sources": [],
-                    "metadata": {
-                        "model": self.config.ollama_model,
-                        "conversation_id": conversation_id,
-                        "source_count": 0,
-                        "processing_mode": "greeting_response"
-                    }
-                }
-
-                # Log greeting interaction to Phoenix
-                if self.phoenix_service:
-                    await self.phoenix_service.log_chat_interaction(
-                        conversation_id or "unknown",
-                        question,
-                        greeting_response,
-                        [],
-                        result["metadata"]
-                    )
-
-                return result
-
-            # Apply rate limiting for non-greeting queries
-            await self._check_rate_limit()
-
-            # Start tracing span for the query
-            trace_span = None
-            if self.phoenix_service:
-                trace_span = self.phoenix_service.create_trace_span(
-                    "rag_query",
-                    {
-                        "query": question[:100],
-                        "use_agents": use_agents,
-                        "conversation_id": conversation_id
-                    }
-                )
-
-            # Get conversation context
-            conversation_context = ""
-            if conversation_id:
-                conversation_context = await self._get_conversation_context(conversation_id)
-
-            # Use CrewAI agents if available and requested
-            if use_agents and self.crew_agents:
-                try:
-                    # Prepare enriched query with conversation context
-                    enriched_query = question
-                    if conversation_context:
-                        enriched_query = f"Previous conversation context:\n{conversation_context}\n\nCurrent question: {question}"
-                        logger.info("Adding conversation context to query", context_length=len(conversation_context))
-
-                    result = await self.crew_agents.process_query(enriched_query)
-
-                    # Track response time for metrics
-                    response_time_ms = int((time.time() - self.last_request_time) * 1000)
-
-                    # Add to conversation history if conversation_id provided
-                    if conversation_id:
-                        await self._add_to_conversation(
-                            conversation_id, "user", question, processing_mode="crew_ai_query"
-                        )
-                        await self._add_to_conversation(
-                            conversation_id, "assistant", result['response'],
-                            sources=result.get('sources', []),
-                            processing_mode="crew_ai_response",
-                            response_time_ms=response_time_ms
-                        )
-
-                        # Memory is handled by PostgreSQL only - no LlamaIndex memory
-
-                    # Update metadata to indicate context was used
-                    if conversation_context:
-                        result["metadata"]["has_conversation_context"] = True
-                        result["metadata"]["context_length"] = len(conversation_context)
-
-                    return result
-
-                except Exception as e:
-                    logger.warning("CrewAI processing failed, falling back to regular RAG", error=str(e))
-                    # Fall through to regular RAG processing
-
-            # Regular RAG processing with retry logic
-            for attempt in range(self.max_retries):
-                try:
-                    # Get response from query engine
-                    logger.info("Attempting LlamaIndex query", attempt=attempt + 1)
-                    response = await asyncio.to_thread(
-                        self.query_engine.query,
-                        question
-                    )
-
-                    logger.info("LlamaIndex query completed",
-                               response_type=type(response).__name__,
-                               has_source_nodes=hasattr(response, 'source_nodes'),
-                               source_nodes_count=len(response.source_nodes) if hasattr(response, 'source_nodes') and response.source_nodes else 0)
-
-                    break  # Success, exit retry loop
-
-                except Exception as e:
-                    logger.warning("Ollama request failed",
-                                 attempt=attempt + 1,
-                                 max_retries=self.max_retries,
-                                 error=str(e))
-
-                    if attempt < self.max_retries - 1:
-                        wait_time = self.retry_delay * (2 ** attempt)  # Exponential backoff
-                        logger.info("Retrying after backoff", wait_time=wait_time)
-                        await asyncio.sleep(wait_time)
-                    else:
-                        # Last attempt failed, return a helpful message
-                        return {
-                            "response": "I apologize, but I'm currently experiencing issues connecting to the language model. Please try again in a moment.",
-                            "sources": [],
-                            "metadata": {
-                                "model": self.config.ollama_model,
-                                "conversation_id": conversation_id,
-                                "error": "connection_failed",
-                                "retry_after": 30
-                            }
-                        }
-
-            # Extract source information
-            sources = []
-            if hasattr(response, 'source_nodes') and response.source_nodes:
-                logger.info("Processing source nodes", count=len(response.source_nodes))
-                for i, node in enumerate(response.source_nodes):
-                    source_info = {
-                        "content": node.text[:200] + "..." if len(node.text) > 200 else node.text,
-                        "score": float(node.score) if hasattr(node, 'score') else 1.0,
-                        "metadata": node.metadata
-                    }
-                    sources.append(source_info)
-                    logger.info(f"Source {i+1}", score=source_info["score"], content_preview=source_info["content"][:50])
-            else:
-                logger.warning("No source nodes found in LlamaIndex response")
-
-            response_text = str(response.response)
-
-            # Memory is now handled by PostgreSQL conversation service only
-            # self.memory.put() calls removed - PostgreSQL stores all conversation data
-
-            result = {
-                "response": response_text,
-                "sources": sources,
-                "metadata": {
-                    "model": self.config.ollama_model,
-                    "conversation_id": conversation_id,
-                    "source_count": len(sources),
-                    "processing_mode": "regular_rag"
-                }
-            }
-
-            # Log to Phoenix if available
-            if self.phoenix_service:
-                # Log complete chat interaction
-                await self.phoenix_service.log_chat_interaction(
-                    conversation_id or "unknown",
-                    question,
-                    result["response"],
-                    sources,
-                    result.get("metadata", {})
-                )
-
-                # Log document retrieval
-                if sources:
-                    await self.phoenix_service.log_document_retrieval(
-                        question,
-                        sources,
-                        0.0,  # We don't track retrieval time separately yet
-                        {"use_agents": use_agents}
-                    )
-
-                # Log basic prompt execution
-                await self.phoenix_service.log_prompt_execution(
-                    "rag_query_complete",
-                    {"query": question},
-                    result["response"],
-                    {
-                        "conversation_id": conversation_id,
-                        "use_agents": use_agents,
-                        "source_count": len(sources),
-                        "processing_mode": result["metadata"]["processing_mode"]
-                    }
-                )
-
-            # End tracing span
-            if trace_span:
-                trace_span.set_attribute("response.length", len(result["response"]))
-                trace_span.set_attribute("sources.count", len(sources))
-                trace_span.end()
-
-            logger.info("Query processed successfully",
-                       response_length=len(result["response"]),
-                       source_count=len(sources))
-
-            return result
-
-        except Exception as e:
-            logger.error("Query processing failed", error=str(e))
-            raise
-    
-    async def query_with_full_agents(self, question: str, conversation_id: Optional[str] = None) -> Dict[str, Any]:
-        """Query using full CrewAI agent workflow (slower but more thorough)."""
-        if not self.is_initialized or not self.crew_agents:
-            return await self.query(question, conversation_id, use_agents=False)
-
-        try:
-            # Check if this is a greeting first
-            if self._is_greeting(question):
-                logger.info("Detected greeting message, responding directly")
-                greeting_response = self._get_greeting_response()
-
-                if conversation_id:
-                    await self._add_to_conversation(conversation_id, "user", question)
-                    await self._add_to_conversation(conversation_id, "assistant", greeting_response)
-
-                result = {
-                    "response": greeting_response,
-                    "sources": [],
-                    "metadata": {
-                        "model": self.config.ollama_model,
-                        "conversation_id": conversation_id,
-                        "source_count": 0,
-                        "processing_mode": "greeting_response"
-                    }
-                }
-
-                # Log greeting interaction to Phoenix
-                if self.phoenix_service:
-                    await self.phoenix_service.log_chat_interaction(
-                        conversation_id or "unknown",
-                        question,
-                        greeting_response,
-                        [],
-                        result["metadata"]
-                    )
-
-                return result
-
-            await self._check_rate_limit()
-
-            logger.info("Processing query with full CrewAI agents", question=question[:100])
-
-            # Get and properly format conversation context to prevent agent confusion
-            conversation_context = ""
-            use_context = False
-            topic_changed = False  # Initialize topic_changed variable
-
-
-            if conversation_id:
-                raw_context = await self._get_conversation_context(conversation_id)
-
-                # Since topic change detection is already handled at router level,
-                # we always use the conversation context if it exists
-                conversation_context = self._clean_conversation_context(raw_context) if raw_context else ""
-                use_context = bool(conversation_context)
-                topic_changed = False  # Topic changes handled at router level
-
-
-            # Always pass full conversation context to agents - let them handle conversation analysis
-            enriched_query = question
-            if conversation_context:
-                enriched_query = f"""## Full Conversation History
-{conversation_context}
-
-## Current User Question/Request
-{question}
-
-INSTRUCTIONS FOR QUERY ANALYSER:
-- Analyze the FULL conversation history above
-- Determine if the current question is:
-  a) A follow-up question (clarification, different format, more details about same topic)
-  b) A completely new question (different topic/domain)
-- Provide appropriate search strategy for the Document Retriever
-
-INSTRUCTIONS FOR DOCUMENT RETRIEVER:
-- For follow-ups: Consider context from previous questions in this conversation
-- For new questions: Focus search on the new topic independently
-- Use the Query Analyser's guidance for search strategy
-
-INSTRUCTIONS FOR RESPONSE GENERATOR:
-- For follow-ups: Reference previous context appropriately and provide the requested format/details
-- For new questions: Provide comprehensive answer about the new topic
-- Always base answers on retrieved documents"""
-                logger.info("CONTEXT SUCCESS: Passing full conversation context to agents",
-                          context_length=len(conversation_context),
-                          context_preview=conversation_context[:100])
-            else:
-                logger.info("CONTEXT MISSING: No conversation context available for multi-message request",
-                          conversation_id=conversation_id,
-                          question=question[:50])
-
-            import time
-            start_time = time.time()
-            result = await self.crew_agents.process_query(enriched_query)
-            execution_time = time.time() - start_time
-
-            # Add to conversation history if conversation_id provided
-            if conversation_id:
-                logger.info("Saving conversation to database",
-                           conversation_id=conversation_id,
-                           question=question[:50],
-                           response_length=len(result['response']))
-                await self._add_to_conversation(conversation_id, "user", question)
-                await self._add_to_conversation(conversation_id, "assistant", result['response'])
-
-                # Memory is handled by PostgreSQL only - no LlamaIndex memory
-
-            # Update metadata to indicate context usage and topic change detection
-            if use_context and conversation_context:
-                result["metadata"]["has_conversation_context"] = True
-                result["metadata"]["context_length"] = len(conversation_context)
-                result["metadata"]["topic_changed"] = False
-            else:
-                result["metadata"]["has_conversation_context"] = False
-                result["metadata"]["context_length"] = 0
-                result["metadata"]["topic_changed"] = topic_changed if conversation_id else False
-
-            # Log to Phoenix if available
-            if self.phoenix_service:
-                # Log complete chat interaction
-                await self.phoenix_service.log_chat_interaction(
-                    conversation_id or "unknown",
-                    question,
-                    result["response"],
-                    result.get("sources", []),
-                    result.get("metadata", {})
-                )
-
-                # Log agent workflow
-                agents_used = result.get("metadata", {}).get("agents_used", [])
-                await self.phoenix_service.log_agent_workflow(
-                    "full_crewai_agents",
-                    question,
-                    agents_used,
-                    execution_time,
-                    result,
-                    {
-                        "conversation_id": conversation_id,
-                        "has_conversation_context": bool(conversation_context),
-                        "context_length": len(conversation_context) if conversation_context else 0
-                    }
-                )
-
-                # Log document retrieval if sources available
-                if result.get("sources"):
-                    await self.phoenix_service.log_document_retrieval(
-                        question,
-                        result["sources"],
-                        0.0,  # CrewAI doesn't track retrieval time separately
-                        {"workflow_type": "full_agents"}
-                    )
-
-            return result
-            
-        except Exception as e:
-            logger.error("Full CrewAI processing failed", error=str(e))
-            # Fallback to regular processing
-            return await self.query(question, conversation_id, use_agents=False)
-    
-    async def stream_chat(self, question: str, conversation_history: List[Dict], conversation_id: Optional[str] = None) -> AsyncGenerator[str, None]:
-        """Stream chat response for real-time UI updates."""
-        if not self.is_initialized:
-            raise RuntimeError("RAG service not initialized")
-
-        try:
-            logger.info("Processing streaming chat", question=question[:100])
-
-            # For now, we'll get the full response and stream it
-            # In production, you'd implement proper streaming with the LLM
-            result = await self.chat(question, conversation_history, conversation_id)
-            
-            # Check if we got an error response
-            if result.get("metadata", {}).get("error") == "quota_exceeded":
-                yield result["response"]
-                return
-            
-            # Yield response in chunks
-            response_text = result["response"]
-            chunk_size = 50  # Characters per chunk
-            
-            for i in range(0, len(response_text), chunk_size):
-                chunk = response_text[i:i + chunk_size]
-                yield chunk
-                await asyncio.sleep(0.05)  # Small delay for streaming effect
-            
-        except Exception as e:
-            logger.error("Streaming chat failed", error=str(e))
-            yield f"Error: {str(e)}"
-
-    async def stream_query(self, question: str, conversation_id: Optional[str] = None) -> AsyncGenerator[str, None]:
-        """Legacy stream method for backward compatibility."""
-        async for chunk in self.stream_chat(question, [], conversation_id):
-            yield chunk
 
     async def get_conversation_history(self, conversation_id: str) -> List[Dict[str, Any]]:
         """Get conversation history from PostgreSQL."""
