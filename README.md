@@ -128,7 +128,7 @@ The backend implements an intelligent chatbot system with conversation memory an
 
 **Agent Team:**
 - **Document Retrieval Specialist** - Finds relevant documents from the knowledge base using domain-aware search
-- **Document-Based Response Writer** - Writes helpful answers using retrieved documents and conversation context
+- **Answer Generator** - Writes helpful answers using retrieved documents and conversation context
 
 **Processing Flow:**
 1. **Document Retrieval** - Agent searches vector store for relevant documents using domain-aware keywords
@@ -186,10 +186,8 @@ OpenWebUI Messages → PostgreSQL Storage → Context Extraction → CrewAI Agen
    │
    ▼
 4. CrewAI Multi-Agent Processing
-   ├── Query Analyzer: "FOLLOW_UP - search for procurement summary"
-   ├── Document Retrieval: Search vector store for procurement docs
-   ├── Information Extractor: Extract summary information
-   └── Response Formatter: Format 3-line summary
+   ├── Document Retrieval Specialist: Search vector store for relevant documents
+   └── Answer Generator: Create comprehensive answer from retrieved documents
    │
    ▼
 5. Intelligent Response
