@@ -113,29 +113,6 @@ class RAGService:
                 embed_model=self.embedding_model,
                 storage_context=storage_context
             )
-            
-            # Initialize query engine with retrieval settings
-            self.query_engine = self.index.as_query_engine(
-                llm=self.llm,
-                similarity_top_k=self.config.similarity_top_k,
-                response_mode="compact",
-                verbose=True
-            )
-            
-            # Remove LlamaIndex memory - we'll use PostgreSQL only for conversation storage
-            self.memory = None
-
-            # Initialize chat engine without memory (PostgreSQL handles conversation context)
-            try:
-                self.chat_engine = self.index.as_chat_engine(
-                    chat_mode="simple",  # Use simple mode without memory
-                    llm=self.llm,
-                    verbose=True
-                )
-                logger.info("Chat engine initialized successfully (using PostgreSQL for conversation memory)")
-            except Exception as e:
-                logger.warning("Failed to initialize chat engine", error=str(e))
-                self.chat_engine = None
 
             # Initialize conversation service
             self.conversation_service = ConversationService(self.config)
@@ -516,38 +493,6 @@ Instructions: This question may be related to our previous conversation or it ma
                     }
                     return result
 
-
-            # Backup query engine option (if needed) - COMMENTED OUT
-            # logger.info("Using backup query engine")
-            # response = await asyncio.to_thread(
-            #     self.query_engine.query,
-            #     question
-            # )
-
-            # Extract source information - COMMENTED OUT
-            # sources = []
-            # if hasattr(response, 'source_nodes') and response.source_nodes:
-            #     for node in response.source_nodes:
-            #         source_info = {
-            #             "content": node.text[:200] + "..." if len(node.text) > 200 else node.text,
-            #             "score": float(node.score) if hasattr(node, 'score') else 1.0,
-            #             "metadata": node.metadata
-            #         }
-            #         sources.append(source_info)
-
-            # response_text = str(response.response)
-
-            # result = {
-            #     "response": response_text,
-            #     "sources": sources,
-            #     "metadata": {
-            #         "model": self.config.ollama_model,
-            #         "conversation_id": conversation_id,
-            #         "source_count": len(sources),
-            #         "processing_mode": "fallback_query_engine",
-            #         "has_conversation_context": len(conversation_history) > 0
-            #     }
-            # }
 
             # This should never be reached since we only use CrewAI agents now
             logger.error("No agents available for processing")
