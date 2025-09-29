@@ -116,7 +116,6 @@ class RAGCrew:
                     embed_model=embed_model
                 )
 
-                # Use retriever directly for document retrieval
                 retriever = index.as_retriever(
                     similarity_top_k=self.config.similarity_top_k,
                     verbose=False  # Turn off verbose to prevent tool output leakage
@@ -184,85 +183,6 @@ Content: {content}
             return response.strip()
 
         return cleaned
-
-    def _generate_summary_from_context(self, query: str):
-        """Generate intelligent response with sources from knowledge base."""
-        sources = []
-        final_response = None
-
-        try:
-            # Get documents from knowledge base
-            retriever = self.rag_service.index.as_retriever(
-                similarity_top_k=self.config.similarity_top_k
-            )
-            nodes = retriever.retrieve(query)
-
-            if nodes:
-                # Store all sources with metadata
-                for node in nodes:
-                    source_info = {
-                        "content": node.text[:800] + "..." if len(node.text) > 800 else node.text,
-                        "score": float(getattr(node, 'score', 0.0)),
-                        "metadata": node.metadata if hasattr(node, 'metadata') else {}
-                    }
-                    sources.append(source_info)
-
-                # Generate summary from context
-                combined_content = "\n\n".join([node.text[:800] for node in nodes[:3]])
-
-                summary_prompt = f"""Answer the question using ONLY the provided documents. If the documents don't contain relevant information for the specific question asked, respond with "I don't have relevant information about this topic in the available documents."
-
-Question: "{query}"
-
-Retrieved Content:
-{combined_content}
-
-Instructions:
-- Provide a detailed, well-structured answer using only relevant document content
-- A REFORMAT REQUEST: User wants to modify/reformat a previous response (e.g., "give answer in 5 lines", "summarize above", "make it shorter")
-   - If so: Use the conversation context to reformat the previous assistant response
-   - Do NOT search for new documents
-- Be comprehensive and thorough in your explanation
-- Include relevant details, examples, and context from the documents
-- Write as a natural, flowing response
-- Don't mention document numbers or sources in the answer
-
-Answer:"""
-
-                # Use the same LLM to create a fine-tuned summary
-                try:
-                    # Try different methods to call the LLM
-                    if hasattr(self.llm, 'call'):
-                        summary_result = self.llm.call(summary_prompt)
-                    elif hasattr(self.llm, '__call__'):
-                        summary_result = self.llm(summary_prompt)
-                    elif hasattr(self.llm, 'generate'):
-                        summary_result = self.llm.generate(summary_prompt)
-                    else:
-                        # Fallback - try direct call
-                        summary_result = self.llm(summary_prompt)
-
-                    if hasattr(summary_result, 'content'):
-                        response = summary_result.content.strip()
-                    elif hasattr(summary_result, 'text'):
-                        response = summary_result.text.strip()
-                    else:
-                        response = str(summary_result).strip()
-                except Exception as llm_error:
-                    logger.warning("LLM call failed, using simple concatenation", error=str(llm_error))
-                    # Fallback to simple content concatenation
-                    response = combined_content[:1000]
-
-                # Clean the response
-                final_response = self._clean_response(response, query)
-
-                if final_response:
-                    logger.info("✅ Generated intelligent response", source_count=len(sources))
-
-        except Exception as e:
-            logger.warning("Could not generate response from context", error=str(e))
-
-        return final_response, sources
 
     def _initialize_agents(self):
         """Initialize 2-agent CrewAI system."""
@@ -377,18 +297,18 @@ Answer:"""
             Exception: If processing fails
         """
         try:
-            logger.info("🚀 Starting CrewAI processing",
+            logger.info("Starting CrewAI processing",
                        query=query[:100],
                        has_context="CONVERSATION CONTEXT:" in query)
 
             # Create crew for query processing
             crew = self.create_crew(query)
-            logger.info("👥 CrewAI agents initialized", agent_count=len(crew.agents))
+            logger.info("CrewAI agents initialized", agent_count=len(crew.agents))
 
             # Execute the crew workflow
-            logger.info("⚡ Executing CrewAI workflow...")
+            logger.info("Executing CrewAI workflow...")
             result = crew.kickoff()
-            logger.info("✅ CrewAI workflow completed")
+            logger.info("CrewAI workflow completed")
 
             # Extract ONLY the final task's output, not the entire workflow
             if hasattr(result, 'tasks_output') and result.tasks_output:
@@ -399,7 +319,7 @@ Answer:"""
             else:
                 raw_output = str(result)
 
-            logger.info("🔧 Raw output extracted", length=len(raw_output), preview=raw_output[:100])
+            logger.info("Raw output extracted", length=len(raw_output), preview=raw_output[:100])
 
             # Clean the CrewAI response as fallback
             crew_ai_response = self._clean_response(raw_output, query)
@@ -410,10 +330,11 @@ Answer:"""
             # Use intelligent response if available, otherwise use CrewAI response
             if intelligent_response and sources:
                 final_response = intelligent_response
-                logger.info("📋 Using Crew AI intelligent response")
+                logger.info("Using Crew AI intelligent response")
             else:
                 final_response = crew_ai_response
-                logger.info("📋 Using CrewAI response")
+                sources = []  # Let CrewAI agents handle sources through tool calling
+                logger.info("Using pure CrewAI response")
             
             # Determine query type (removed greeting detection)
             query_type = "information"
@@ -458,6 +379,84 @@ Answer:"""
                 }
             }
 
+    def _generate_summary_from_context(self, query: str):
+        """Generate intelligent response with sources from knowledge base."""
+        sources = []
+        final_response = None
+
+        try:
+            # Get documents from knowledge base
+            retriever = self.rag_service.index.as_retriever(
+                similarity_top_k=self.config.similarity_top_k
+            )
+            nodes = retriever.retrieve(query)
+
+            if nodes:
+                # Store all sources with metadata
+                for node in nodes:
+                    source_info = {
+                        "content": node.text[:800] + "..." if len(node.text) > 800 else node.text,
+                        "score": float(getattr(node, 'score', 0.0)),
+                        "metadata": node.metadata if hasattr(node, 'metadata') else {}
+                    }
+                    sources.append(source_info)
+
+                # Generate summary from context
+                combined_content = "\n\n".join([node.text[:800] for node in nodes[:3]])
+
+                summary_prompt = f"""Answer the question using ONLY the provided documents. If the documents don't contain relevant information for the specific question asked, respond with "I don't have relevant information about this topic in the available documents."
+
+Question: "{query}"
+
+Retrieved Content:
+{combined_content}
+
+Instructions:
+- Provide a detailed, well-structured answer using only relevant document content
+- A REFORMAT REQUEST: User wants to modify/reformat a previous response (e.g., "give answer in 5 lines", "summarize above", "make it shorter")
+   - If so: Use the conversation context to reformat the previous assistant response
+   - Do NOT search for new documents
+- Be comprehensive and thorough in your explanation
+- Include relevant details, examples, and context from the documents
+- Write as a natural, flowing response
+- Don't mention document numbers or sources in the answer
+
+Answer:"""
+
+                # Use the same LLM to create a fine-tuned summary
+                try:
+                    # Try different methods to call the LLM
+                    if hasattr(self.llm, 'call'):
+                        summary_result = self.llm.call(summary_prompt)
+                    elif hasattr(self.llm, '__call__'):
+                        summary_result = self.llm(summary_prompt)
+                    elif hasattr(self.llm, 'generate'):
+                        summary_result = self.llm.generate(summary_prompt)
+                    else:
+                        # Fallback - try direct call
+                        summary_result = self.llm(summary_prompt)
+
+                    if hasattr(summary_result, 'content'):
+                        response = summary_result.content.strip()
+                    elif hasattr(summary_result, 'text'):
+                        response = summary_result.text.strip()
+                    else:
+                        response = str(summary_result).strip()
+                except Exception as llm_error:
+                    logger.warning("LLM call failed, using simple concatenation", error=str(llm_error))
+                    # Fallback to simple content concatenation
+                    response = combined_content[:1000]
+
+                # Clean the response
+                final_response = self._clean_response(response, query)
+
+                if final_response:
+                    logger.info("Generated intelligent response", source_count=len(sources))
+
+        except Exception as e:
+            logger.warning("Could not generate response from context", error=str(e))
+
+        return final_response, sources
 
 # Simple test function
 def test_basic_functionality():
@@ -465,7 +464,7 @@ def test_basic_functionality():
     print("Basic RAG Crew test - run this to verify setup")
     from config import BackendConfig
     config = BackendConfig()
-    print(f"✅ Config loaded: {config.ollama_base_url}")
+    print(f"Config loaded: {config.ollama_base_url}")
 
 
 if __name__ == "__main__":
