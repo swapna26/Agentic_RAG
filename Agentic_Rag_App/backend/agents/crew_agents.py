@@ -23,6 +23,10 @@ from config import BackendConfig
 os.environ['OPENAI_API_KEY'] = ''
 os.environ['OPENAI_API_BASE'] = ''
 
+# Explicitly disable Vertex AI and force standard Gemini API
+os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = ''
+os.environ['VERTEX_AI_PROJECT'] = ''
+
 # Configure CrewAI logging to flow to main application logs
 logging.getLogger("crewai").setLevel(logging.INFO)
 logging.getLogger("crewai").addHandler(logging.StreamHandler())
@@ -53,8 +57,12 @@ class RAGCrew:
         """Configure LLM based on provider (Ollama or Gemini)."""
         if self.config.llm_provider == 'gemini':
             logger.info("Configuring Gemini LLM for CrewAI agents")
+            # Force standard Gemini API by setting provider environment
+            import os
+            os.environ['GEMINI_API_KEY'] = self.config.gemini_api_key
+
             return LLM(
-                model=f"google/{self.config.gemini_model}",  # Use google/ prefix for standard Gemini API
+                model=f"gemini/{self.config.gemini_model}",  # Use gemini/ prefix
                 api_key=self.config.gemini_api_key,
                 temperature=0.0,
                 max_tokens=2000,
@@ -80,14 +88,18 @@ class RAGCrew:
             Args:
                 search_terms: Simple search keywords as a string
             """
+            print(f"🔍 DEBUG LINE 98: search_documents function called with: {search_terms[:100]}")
             try:
-                logger.info("Document search called", search_terms=search_terms[:100])
+                logger.info("🔍 CREW AI TOOL CALLED: search_documents", search_terms=search_terms[:100], provider=self.config.llm_provider)
+                print(f"🔍 DEBUG LINE 99: Logger info executed")
 
                 # Validate we have a proper query string
                 if not search_terms or not search_terms.strip():
+                    print("❌ DEBUG LINE 102: Empty search terms")
                     return "Error: Search query cannot be empty."
 
                 search_query = search_terms.strip()
+                print(f"🔍 DEBUG LINE 106: Search query processed: {search_query}")
 
                 # Check if we got a placeholder description instead of real query
                 placeholder_queries = [
@@ -97,19 +109,26 @@ class RAGCrew:
                     "search"
                 ]
                 if search_query.lower() in [p.lower() for p in placeholder_queries]:
+                    print("❌ DEBUG LINE 115: Placeholder query detected")
                     return "Error: Please provide a specific search query."
+
+                print(f"✅ DEBUG LINE 118: Query validation passed")
                 
                 # Use your RAG service's existing database configuration
                 DATABASE_URL = self.config.database_url
                 db_url_parts = urlparse(DATABASE_URL)
+                print(f"🔗 DEBUG LINE 122: Database URL: {DATABASE_URL}")
+                print(f"🔗 DEBUG LINE 123: DB Host: {db_url_parts.hostname}, Port: {db_url_parts.port}")
 
-                logger.info("Using RAG service database connection", 
+                logger.info("Using RAG service database connection",
                            host=db_url_parts.hostname,
                            port=db_url_parts.port,
                            database=db_url_parts.path.lstrip('/'),
                            user=db_url_parts.username)
+                print(f"🔗 DEBUG LINE 130: Logger database info executed")
                 
                 # Initialize the vector store with your configuration
+                print(f"🗄️ DEBUG LINE 131: Creating vector store with table: embeddings_gemini")
                 vector_store = PGVectorStore.from_params(
                     host=db_url_parts.hostname,
                     port=db_url_parts.port,
@@ -119,36 +138,60 @@ class RAGCrew:
                     table_name="embeddings_gemini",
                     embed_dim=768,  # Match the actual database embedding dimensions
                 )
+                print(f"✅ DEBUG LINE 140: Vector store created successfully")
 
                 # Initialize embedding model based on provider
+                print(f"🤖 DEBUG LINE 142: LLM Provider: {self.config.llm_provider}")
                 if self.config.llm_provider == 'gemini':
+                    print(f"🤖 DEBUG LINE 144: Creating Gemini embedding model: {self.config.gemini_embedding_model}")
                     embed_model = GeminiEmbedding(
                         model_name=self.config.gemini_embedding_model,
                         api_key=self.config.gemini_api_key,
                     )
                     logger.info("Using Gemini embedding model for document retrieval")
+                    print(f"✅ DEBUG LINE 150: Gemini embedding model created")
                 else:
+                    print(f"🤖 DEBUG LINE 152: Creating Ollama embedding model: {self.config.ollama_embedding_model}")
                     embed_model = OllamaEmbedding(
                         model_name=self.config.ollama_embedding_model,
                         base_url=self.config.ollama_base_url,
                     )
                     logger.info("Using Ollama embedding model for document retrieval")
+                    print(f"✅ DEBUG LINE 158: Ollama embedding model created")
 
                 # Create a LlamaIndex VectorStoreIndex object from the vector store
+                print(f"📚 DEBUG LINE 163: Creating VectorStoreIndex from vector store")
                 index = VectorStoreIndex.from_vector_store(
                     vector_store=vector_store,
                     embed_model=embed_model
                 )
+                print(f"✅ DEBUG LINE 167: VectorStoreIndex created successfully")
 
+                print(f"🔍 DEBUG LINE 169: Creating retriever with top_k={self.config.similarity_top_k}")
                 retriever = index.as_retriever(
                     similarity_top_k=self.config.similarity_top_k,
                     verbose=False  # Turn off verbose to prevent tool output leakage
                 )
+                print(f"✅ DEBUG LINE 173: Retriever created successfully")
 
                 # Query the index to retrieve nodes directly
+                print(f"📊 DEBUG LINE 175: About to query vector database with: '{search_query}'")
+                logger.info("📊 Querying vector database", query=search_query, table_suffix="gemini" if self.config.llm_provider == 'gemini' else "ollama")
                 retrieved_nodes = retriever.retrieve(search_query)
-                
+                print(f"✅ DEBUG LINE 178: Retrieved {len(retrieved_nodes)} nodes from database")
+
+                # Print detailed info about each retrieved node
+                for i, node in enumerate(retrieved_nodes):
+                    score = getattr(node, 'score', 0.0)
+                    content_preview = node.text[:200] + "..." if len(node.text) > 200 else node.text
+                    source_info = node.metadata.get('filename', 'Unknown') if hasattr(node, 'metadata') and node.metadata else 'No metadata'
+                    print(f"📄 DEBUG NODE {i+1}: Score={score:.3f}, Source={source_info}")
+                    print(f"📄 DEBUG CONTENT {i+1}: {content_preview}")
+                    print("---")
+                logger.info("✅ Database retrieval completed", num_results=len(retrieved_nodes), has_results=len(retrieved_nodes) > 0)
+
                 if not retrieved_nodes:
+                    print(f"❌ DEBUG LINE 181: No nodes retrieved, returning error message")
                     return f"No relevant documents found for query: '{search_query}'. Please try different keywords or check if documents are properly indexed."
                 
                 # Format the retrieved context with source metadata - Keep concise for Gemma2:1b
@@ -161,7 +204,7 @@ class RAGCrew:
                     page_info = ""
                     
                     if hasattr(node, 'metadata') and node.metadata:
-                        file_name = node.metadata.get('file_name', 'Unknown file')
+                        file_name = node.metadata.get('filename', 'Unknown file')
                         source_info = f"Source: {file_name}"
                         
                         page_num = node.metadata.get('page_label', '')
@@ -240,8 +283,8 @@ Content: {content}
             llm=self.llm,
             verbose=False,
             allow_delegation=False,
-            max_iter=1,
-            max_execution_time=45
+            max_iter=5,
+            max_execution_time=60
         )
 
         # Agent 2: Response Generation Agent
@@ -252,8 +295,8 @@ Content: {content}
             llm=self.llm,
             verbose=False,
             allow_delegation=False,
-            max_iter=1,
-            max_execution_time=45
+            max_iter=5,
+            max_execution_time=60
         )
         
     
@@ -292,7 +335,7 @@ Content: {content}
             process=Process.sequential,
             verbose=False,
             memory=False,
-            max_execution_time=120
+            max_execution_time=180
         )
 
         return crew
@@ -330,9 +373,9 @@ Content: {content}
             logger.info("CrewAI agents initialized", agent_count=len(crew.agents))
 
             # Execute the crew workflow
-            logger.info("Executing CrewAI workflow...")
+            logger.info("🚀 STARTING CrewAI multi-agent workflow", provider=self.config.llm_provider)
             result = crew.kickoff()
-            logger.info("CrewAI workflow completed")
+            logger.info("🎯 CrewAI workflow completed successfully")
 
             # Extract ONLY the final task's output, not the entire workflow
             if hasattr(result, 'tasks_output') and result.tasks_output:
@@ -346,7 +389,8 @@ Content: {content}
             logger.info("Raw output extracted", length=len(raw_output), preview=raw_output[:100])
 
             # Clean the CrewAI response as fallback
-            crew_ai_response = self._clean_response(raw_output, query)
+            # crew_ai_response = self._clean_response(raw_output, query)  # Commented out to see raw chunks with scores
+            crew_ai_response = raw_output
 
             # DISABLED: Context summary generation - using only tool calling now
             # intelligent_response, sources = self._generate_summary_from_context(query)
