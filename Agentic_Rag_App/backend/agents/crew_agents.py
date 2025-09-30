@@ -178,6 +178,7 @@ class RAGCrew:
                 print(f"📊 DEBUG LINE 175: About to query vector database with: '{search_query}'")
                 logger.info("📊 Querying vector database", query=search_query, table_suffix="gemini" if self.config.llm_provider == 'gemini' else "ollama")
                 retrieved_nodes = retriever.retrieve(search_query)
+                self.last_retrieved_nodes = retrieved_nodes  # Store for source extraction
                 print(f"✅ DEBUG LINE 178: Retrieved {len(retrieved_nodes)} nodes from database")
 
                 # Print detailed info about each retrieved node
@@ -195,22 +196,28 @@ class RAGCrew:
                     return f"No relevant documents found for query: '{search_query}'. Please try different keywords or check if documents are properly indexed."
                 
                 # Format the retrieved context with source metadata - Keep concise for Gemma2:1b
+                print(f"📝 DEBUG LINE 197: Starting to format {len(retrieved_nodes)} retrieved chunks")
                 formatted_chunks = []
                 for i, node in enumerate(retrieved_nodes, 1):
+                    print(f"📝 DEBUG CHUNK {i}: Processing node with {len(node.text)} characters")
                     content = node.text[:800]  # Limit content size
-                    
+
                     # Extract source file information from metadata
                     source_info = "Unknown source"
                     page_info = ""
-                    
+
                     if hasattr(node, 'metadata') and node.metadata:
+                        print(f"📝 DEBUG CHUNK {i}: Node has metadata: {list(node.metadata.keys())}")
                         file_name = node.metadata.get('filename', 'Unknown file')
                         source_info = f"Source: {file_name}"
-                        
+                        print(f"📝 DEBUG CHUNK {i}: Source info: {source_info}")
+
                         page_num = node.metadata.get('page_label', '')
                         if page_num:
                             page_info = f" (Page {page_num})"
-                    
+                    else:
+                        print(f"📝 DEBUG CHUNK {i}: Node has NO metadata")
+
                     score = getattr(node, 'score', 0.0)
                     formatted_chunk = f"""DOCUMENT {i}:
 {source_info}{page_info} | Score: {score:.2f}
@@ -218,9 +225,16 @@ Content: {content}
 
 """
                     formatted_chunks.append(formatted_chunk)
-                
+                    print(f"📝 DEBUG CHUNK {i}: Formatted chunk length: {len(formatted_chunk)}")
+
                 # Limit total response size for smaller model
                 context = "\n".join(formatted_chunks)[:4000]
+                print(f"📝 DEBUG LINE 223: Final context length: {len(context)} characters")
+                print(f"📝 DEBUG CONTEXT PREVIEW:")
+                print(f"=== CONTEXT START ===")
+                print(context[:500] + "..." if len(context) > 500 else context)
+                print(f"=== CONTEXT END ===")
+                print(f"📝 DEBUG LINE 227: About to return context to CrewAI")
                 
                 return context
                 
@@ -369,35 +383,74 @@ Content: {content}
                        has_context="CONVERSATION CONTEXT:" in query)
 
             # Create crew for query processing
+            print(f"🚀 DEBUG LINE 384: Creating crew for query: '{query[:50]}...'")
             crew = self.create_crew(query)
             logger.info("CrewAI agents initialized", agent_count=len(crew.agents))
+            print(f"🚀 DEBUG LINE 386: Crew created with {len(crew.agents)} agents")
 
             # Execute the crew workflow
             logger.info("🚀 STARTING CrewAI multi-agent workflow", provider=self.config.llm_provider)
+            print(f"🚀 DEBUG LINE 389: Starting crew.kickoff() execution...")
             result = crew.kickoff()
+            print(f"🚀 DEBUG LINE 391: Crew execution completed!")
+            print(f"🚀 DEBUG RESULT TYPE: {type(result)}")
             logger.info("🎯 CrewAI workflow completed successfully")
 
             # Extract ONLY the final task's output, not the entire workflow
+            print(f"🚀 DEBUG LINE 394: Extracting output from result...")
             if hasattr(result, 'tasks_output') and result.tasks_output:
+                print(f"🚀 DEBUG: Found tasks_output with {len(result.tasks_output)} tasks")
                 # Get the last task's output (response_task)
                 raw_output = str(result.tasks_output[-1].raw)
+                print(f"🚀 DEBUG: Using last task output")
             elif hasattr(result, 'raw'):
+                print(f"🚀 DEBUG: Using result.raw")
                 raw_output = str(result.raw)
             else:
+                print(f"🚀 DEBUG: Using str(result)")
                 raw_output = str(result)
+
+            print(f"🚀 DEBUG RAW OUTPUT LENGTH: {len(raw_output)}")
+            print(f"🚀 DEBUG RAW OUTPUT PREVIEW:")
+            print("=== RAW OUTPUT START ===")
+            print(raw_output[:1000] + "..." if len(raw_output) > 1000 else raw_output)
+            print("=== RAW OUTPUT END ===")
 
             logger.info("Raw output extracted", length=len(raw_output), preview=raw_output[:100])
 
             # Clean the CrewAI response as fallback
             # crew_ai_response = self._clean_response(raw_output, query)  # Commented out to see raw chunks with scores
             crew_ai_response = raw_output
+            print(f"🚀 DEBUG: Setting crew_ai_response = raw_output")
 
             # DISABLED: Context summary generation - using only tool calling now
             # intelligent_response, sources = self._generate_summary_from_context(query)
 
             # Force use of CrewAI response only (tool calling)
             final_response = crew_ai_response
-            sources = []  # Let CrewAI agents handle sources through tool calling
+            # Extract unique sources from the last retrieved nodes
+            sources = []
+            if hasattr(self, 'last_retrieved_nodes') and self.last_retrieved_nodes:
+                print(f"🚀 DEBUG EXTRACTING SOURCES FROM {len(self.last_retrieved_nodes)} NODES")
+                seen_files = set()
+                for node in self.last_retrieved_nodes:
+                    if hasattr(node, 'metadata') and node.metadata:
+                        filename = node.metadata.get('filename', 'Unknown')
+                        if filename != 'Unknown' and filename not in seen_files:
+                            sources.append({
+                                "filename": filename,
+                                "score": float(getattr(node, 'score', 0.0))
+                            })
+                            seen_files.add(filename)
+                            print(f"🚀 DEBUG ADDED SOURCE: {filename}")
+                print(f"🚀 DEBUG TOTAL UNIQUE SOURCES: {len(sources)}")
+            else:
+                print("🚀 DEBUG NO RETRIEVED NODES FOR SOURCES")
+            print(f"🚀 DEBUG FINAL RESPONSE LENGTH: {len(final_response)}")
+            print(f"🚀 DEBUG FINAL RESPONSE PREVIEW:")
+            print("=== FINAL RESPONSE START ===")
+            print(final_response[:500] + "..." if len(final_response) > 500 else final_response)
+            print("=== FINAL RESPONSE END ===")
             logger.info("Using pure CrewAI response from tool calling only")
             
             # Determine query type (removed greeting detection)
