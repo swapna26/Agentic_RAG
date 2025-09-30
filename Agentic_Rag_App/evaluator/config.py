@@ -11,7 +11,7 @@ class EvaluatorConfig:
 
     # Database configuration
     database_url: str = "postgresql://raguser:ragpassword@localhost:5432/agentic_rag"
-    vector_table: str = "data_llamaindex_vectors_copy"
+    vector_table: str = "data_embeddings_gemini"
 
     # Ollama configuration - using dedicated port for evaluation to avoid resource conflicts
     ollama_base_url: str = "http://localhost:11434"  # Different port from production (11434)

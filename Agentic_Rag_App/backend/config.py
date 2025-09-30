@@ -18,10 +18,18 @@ class BackendConfig:
             'postgresql://raguser:ragpassword@localhost:5432/agentic_rag'
         )
         
+        # LLM Provider Selection
+        self.llm_provider = os.getenv('LLM_PROVIDER', 'ollama')  # 'ollama' or 'gemini'
+
         # Ollama API
         self.ollama_base_url = os.getenv('OLLAMA_BASE_URL', 'http://localhost:11434')
         self.ollama_model = os.getenv('OLLAMA_MODEL', 'llama3.2:1b')
         self.ollama_embedding_model = os.getenv('OLLAMA_EMBEDDING_MODEL', 'nomic-embed-text:v1.5')
+
+        # Gemini API
+        self.gemini_api_key = os.getenv('GEMINI_API_KEY')
+        self.gemini_model = os.getenv('GEMINI_MODEL', 'gemini-1.5-flash')
+        self.gemini_embedding_model = os.getenv('GEMINI_EMBEDDING_MODEL', 'text-embedding-004')
         
         # Phoenix
         self.phoenix_base_url = os.getenv('PHOENIX_BASE_URL', 'http://localhost:6006')
@@ -73,9 +81,16 @@ class BackendConfig:
         """Validate configuration."""
         if not self.database_url.startswith(('postgresql://', 'postgresql+psycopg2://')):
             raise ValueError('DATABASE_URL must be a PostgreSQL connection string')
-        
-        if not self.ollama_base_url:
-            print("Warning: OLLAMA_BASE_URL not set. Using default: http://localhost:11434")
+
+        # Validate LLM provider specific settings
+        if self.llm_provider == 'gemini':
+            if not self.gemini_api_key:
+                raise ValueError('GEMINI_API_KEY is required when using Gemini provider')
+        elif self.llm_provider == 'ollama':
+            if not self.ollama_base_url:
+                print("Warning: OLLAMA_BASE_URL not set. Using default: http://localhost:11434")
+        else:
+            raise ValueError(f'Invalid LLM_PROVIDER: {self.llm_provider}. Must be "ollama" or "gemini"')
 
 
 # Global config instance

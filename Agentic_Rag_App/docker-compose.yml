@@ -66,40 +66,47 @@ services:
       DATABASE_URL: "postgresql://raguser:ragpassword@postgres:5432/agentic_rag"
       OLLAMA_BASE_URL: "http://ollama:11434"
       PHOENIX_BASE_URL: "http://phoenix:6006"
+      # Gemini Configuration
+      LLM_PROVIDER: "${LLM_PROVIDER:-gemini}"
+      GEMINI_API_KEY: "${GEMINI_API_KEY}"
+      GEMINI_MODEL: "${GEMINI_MODEL:-gemini-1.5-flash}"
+      GEMINI_EMBEDDING_MODEL: "${GEMINI_EMBEDDING_MODEL:-text-embedding-004}"
+      # CrewAI Settings
+      CREW_VERBOSE: "true"
+      CREW_MEMORY: "true"
+      # Explicitly disable Vertex AI (use standard Gemini API instead)
+      GOOGLE_APPLICATION_CREDENTIALS: ""
+      VERTEX_AI_PROJECT: ""
     volumes:
       - ./backend:/app
       - ./documents:/app/documents
     depends_on:
       postgres:
         condition: service_healthy
-      ollama:
-        condition: service_started
     networks:
       - rag_network
-    profiles:
-      - backend
 
-  # Ollama Service
-  ollama:
-    image: ollama/ollama:latest
-    container_name: agentic_rag_ollama
-    ports:
-      - "11434:11434"
-    volumes:
-      - ollama_data:/root/.ollama
-    environment:
-      - OLLAMA_HOST=0.0.0.0
-    networks:
-      - rag_network
-    restart: unless-stopped
-    # Uncomment the next lines if you have NVIDIA GPU support
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: 1
-    #           capabilities: [gpu]
+  # Ollama Service (MODELS DOWNLOADED - Uncomment when needed)
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   container_name: agentic_rag_ollama
+  #   ports:
+  #     - "11434:11434"
+  #   volumes:
+  #     - ollama_data:/root/.ollama
+  #   environment:
+  #     - OLLAMA_HOST=0.0.0.0
+  #   networks:
+  #     - rag_network
+  #   restart: unless-stopped
+  #   # Uncomment the next lines if you have NVIDIA GPU support
+  #   # deploy:
+  #   #   resources:
+  #   #     reservations:
+  #   #       devices:
+  #   #         - driver: nvidia
+  #   #           count: 1
+  #   #           capabilities: [gpu]
 
   # OpenWebUI
   openwebui:
@@ -108,16 +115,15 @@ services:
     ports:
       - "3000:8080"
     environment:
-      - OLLAMA_BASE_URL=http://ollama:11434
       - OPENAI_API_BASE_URL=http://agentic_rag_backend:8000/api
       - OPENAI_API_KEY=dummy-key-for-agentic-rag
       - WEBUI_SECRET_KEY=your-secret-key-change-this-in-production
-      - WEBUI_NAME=Agentic RAG Assistant
+      - WEBUI_NAME=Gemini Agentic RAG Assistant
       - DEFAULT_USER_ROLE=user
     volumes:
       - openwebui_data:/app/backend/data
     depends_on:
-      - ollama
+      - rag_backend
     networks:
       - rag_network
     restart: unless-stopped
@@ -125,7 +131,7 @@ services:
 volumes:
   postgres_data:
   phoenix_data:
-  ollama_data:
+  ollama_data:  # Needed for Ollama model storage
   openwebui_data:
 
 networks:

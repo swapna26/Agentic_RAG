@@ -16,6 +16,7 @@ from crewai.tools import tool
 from llama_index.vector_stores.postgres import PGVectorStore
 from llama_index.core import VectorStoreIndex
 from llama_index.embeddings.ollama import OllamaEmbedding
+from llama_index.embeddings.gemini import GeminiEmbedding
 from config import BackendConfig
 
 # Explicitly disable OpenAI for CrewAI to prevent API key errors
@@ -43,16 +44,31 @@ class RAGCrew:
         self.rag_service = rag_service
         self.config = config
 
-        # Configure LLM for agents
-        self.llm = LLM(
-            model=f"ollama/{self.config.ollama_model}",
-            api_base=self.config.ollama_base_url,
-            temperature=0.0,
-            max_tokens=2000,
-            timeout=30
-        )
+        # Configure LLM for agents based on provider
+        self.llm = self._configure_llm()
 
         self._initialize_agents()
+
+    def _configure_llm(self):
+        """Configure LLM based on provider (Ollama or Gemini)."""
+        if self.config.llm_provider == 'gemini':
+            logger.info("Configuring Gemini LLM for CrewAI agents")
+            return LLM(
+                model=f"google/{self.config.gemini_model}",  # Use google/ prefix for standard Gemini API
+                api_key=self.config.gemini_api_key,
+                temperature=0.0,
+                max_tokens=2000,
+                timeout=30
+            )
+        else:  # Default to Ollama
+            logger.info("Configuring Ollama LLM for CrewAI agents")
+            return LLM(
+                model=f"ollama/{self.config.ollama_model}",
+                api_base=self.config.ollama_base_url,
+                temperature=0.0,
+                max_tokens=2000,
+                timeout=30
+            )
 
     def _create_document_retrieval_tool(self):
         """Create a document retrieval tool using the @tool decorator."""
@@ -100,15 +116,23 @@ class RAGCrew:
                     database=db_url_parts.path.lstrip('/'),
                     user=db_url_parts.username,
                     password=db_url_parts.password,
-                    table_name="llamaindex_vectors_copy",
+                    table_name="embeddings_gemini",
                     embed_dim=768,  # Match the actual database embedding dimensions
                 )
 
-                # Initialize Ollama embedding model using your config
-                embed_model = OllamaEmbedding(
-                    model_name=self.config.ollama_embedding_model,
-                    base_url=self.config.ollama_base_url,
-                )
+                # Initialize embedding model based on provider
+                if self.config.llm_provider == 'gemini':
+                    embed_model = GeminiEmbedding(
+                        model_name=self.config.gemini_embedding_model,
+                        api_key=self.config.gemini_api_key,
+                    )
+                    logger.info("Using Gemini embedding model for document retrieval")
+                else:
+                    embed_model = OllamaEmbedding(
+                        model_name=self.config.ollama_embedding_model,
+                        base_url=self.config.ollama_base_url,
+                    )
+                    logger.info("Using Ollama embedding model for document retrieval")
 
                 # Create a LlamaIndex VectorStoreIndex object from the vector store
                 index = VectorStoreIndex.from_vector_store(
@@ -324,17 +348,13 @@ Content: {content}
             # Clean the CrewAI response as fallback
             crew_ai_response = self._clean_response(raw_output, query)
 
-            # PRIMARY: Try to get intelligent response from knowledge base
-            intelligent_response, sources = self._generate_summary_from_context(query)
+            # DISABLED: Context summary generation - using only tool calling now
+            # intelligent_response, sources = self._generate_summary_from_context(query)
 
-            # Use intelligent response if available, otherwise use CrewAI response
-            if intelligent_response and sources:
-                final_response = intelligent_response
-                logger.info("Using Crew AI intelligent response")
-            else:
-                final_response = crew_ai_response
-                sources = []  # Let CrewAI agents handle sources through tool calling
-                logger.info("Using pure CrewAI response")
+            # Force use of CrewAI response only (tool calling)
+            final_response = crew_ai_response
+            sources = []  # Let CrewAI agents handle sources through tool calling
+            logger.info("Using pure CrewAI response from tool calling only")
             
             # Determine query type (removed greeting detection)
             query_type = "information"
@@ -348,11 +368,12 @@ Content: {content}
                 "response": final_response,
                 "sources": sources,
                 "metadata": {
-                    "model": "crewai-agentic-rag-llama3.2:1b",
+                    "model": f"crewai-agentic-rag-{self.config.llm_provider}-{self.config.gemini_model if self.config.llm_provider == 'gemini' else self.config.ollama_model}",
                     "agents_used": ["intelligent_retrieval_specialist", "information_extractor"],  # Only 2 agents now
                     "process_type": "sequential",
                     "query_type": query_type,
-                    "source_count": len(sources)
+                    "source_count": len(sources),
+                    "llm_provider": self.config.llm_provider
                 }
             }
             
@@ -373,9 +394,10 @@ Content: {content}
                 "sources": [],
                 "metadata": {
                     "error": str(e),
-                    "model": "crewai-agentic-rag-llama3.2:1b",
+                    "model": f"crewai-agentic-rag-{self.config.llm_provider}-{self.config.gemini_model if self.config.llm_provider == 'gemini' else self.config.ollama_model}",
                     "process_type": "error_handling",
-                    "query_type": "error"
+                    "query_type": "error",
+                    "llm_provider": self.config.llm_provider
                 }
             }
 

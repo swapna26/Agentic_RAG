@@ -13,6 +13,7 @@ import structlog
 from llama_index.core import VectorStoreIndex, StorageContext
 from llama_index.vector_stores.postgres import PGVectorStore
 from llama_index.embeddings.ollama import OllamaEmbedding
+from llama_index.embeddings.gemini import GeminiEmbedding
 from llama_index.llms.ollama import Ollama
 # Removed ChatMemoryBuffer and ChatMessage - using PostgreSQL only for conversation storage
 
@@ -68,13 +69,21 @@ class RAGService:
         try:
             logger.info("Initializing Agentic RAG service with CrewAI integration")
 
-            # Initialize Ollama embedding model
-            self.embedding_model = OllamaEmbedding(
-                model_name=self.config.ollama_embedding_model,
-                base_url=self.config.ollama_base_url,
-            )
+            # Initialize embedding model based on provider
+            if self.config.llm_provider == 'gemini':
+                logger.info("Initializing Gemini embedding model", model=self.config.gemini_embedding_model)
+                self.embedding_model = GeminiEmbedding(
+                    model_name=self.config.gemini_embedding_model,
+                    api_key=self.config.gemini_api_key,
+                )
+            else:
+                logger.info("Initializing Ollama embedding model", model=self.config.ollama_embedding_model)
+                self.embedding_model = OllamaEmbedding(
+                    model_name=self.config.ollama_embedding_model,
+                    base_url=self.config.ollama_base_url,
+                )
 
-            # Initialize Ollama LLM with standardized timeout
+            # Initialize Ollama LLM (we still use Ollama for LLM even with Gemini embeddings)
             self.llm = Ollama(
                 model=self.config.ollama_model,
                 base_url=self.config.ollama_base_url,
@@ -90,17 +99,25 @@ class RAGService:
                 logger.warning("Ollama API test failed, continuing anyway", error=str(e))
             
             # Initialize PostgreSQL vector store with explicit configuration
-            # LlamaIndex adds "data_" prefix, so use "llamaindex_vectors_copy" to get "data_llamaindex_vectors_copy"
+            # Choose table based on provider - LlamaIndex adds "data_" prefix
+            if self.config.llm_provider == 'gemini':
+                table_name = "embeddings_gemini"  # Will become "data_embeddings_gemini"
+                embed_dim = 768  # Gemini text-embedding-004 dimensions
+                logger.info("Using Gemini embeddings table", table_name=f"data_{table_name}")
+            else:
+                table_name = "llamaindex_vectors_copy"  # Will become "data_llamaindex_vectors_copy"
+                embed_dim = 768  # Ollama embedding dimensions
+                logger.info("Using Ollama embeddings table", table_name=f"data_{table_name}")
+
             self.vector_store = PGVectorStore.from_params(
                 database=self._extract_db_name(self.config.database_url),
                 host=self._extract_host(self.config.database_url),
                 port=self._extract_port(self.config.database_url),
                 user=self._extract_user(self.config.database_url),
                 password=self._extract_password(self.config.database_url),
-                table_name="llamaindex_vectors_copy",
-                embed_dim=768,  # Match the actual database embedding dimensions
+                table_name=table_name,
+                embed_dim=embed_dim,
                 perform_setup=False,  # Don't try to create table - it already exists
-                # Enable debugging to see what's happening
                 debug=True,
             )
             
