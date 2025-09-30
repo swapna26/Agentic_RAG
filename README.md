@@ -6,10 +6,6 @@ Production-ready FastAPI backend for Retrieval-Augmented Generation with integra
 
 The system processes user queries using CrewAI multi-agent system for intelligent document retrieval and response generation.
 
-Context handling:
-- Conversation history is provided to agents for context-aware responses
-- Agents intelligently determine relevance and handle topic transitions
-- Clean separation between new topics and follow-up questions
 
 ## Endpoints (OpenAI compatible)
 
@@ -117,8 +113,6 @@ The backend implements an intelligent chatbot system with conversation memory an
 - **CrewAI Multi-Agent Processing**: Intelligent processing with specialized retrieval and response agents
 - **Conversation Memory**: Persistent context management with PostgreSQL storage
 - **OpenWebUI Integration**: Seamless chat interface with OpenAI API compatibility
-- **Context-Aware Responses**: Follow-up questions answered with full conversation context
-- **Production Ready**: Comprehensive error handling, logging, and monitoring
 
 ## Core Components
 
@@ -135,14 +129,6 @@ The backend implements an intelligent chatbot system with conversation memory an
 2. **Response Generation** - Agent creates contextually appropriate answers from retrieved documents
 
 ### RAG Service (`services/rag_service.py`)
-
-**CrewAI Multi-Agent Processing:**
-
-- Intelligent multi-agent system for document analysis
-- Context-aware conversation handling
-- Specialized agents for retrieval and response generation
-- Integrated with PostgreSQL for conversation memory
-- Processing time: 10-30 seconds for comprehensive analysis
 
 ### Conversation Memory System
 
@@ -283,30 +269,6 @@ POST /api/chat/completions
   ],
   "stream": false
 }
-```
-
-**Response:**
-```json
-{
-  "id": "chatcmpl-123",
-  "object": "chat.completion",
-  "created": 1234567890,
-  "model": "agentic-rag-ollama",
-  "choices": [{
-    "index": 0,
-    "message": {
-      "role": "assistant",
-      "content": "# Procurement Summary\n\n- Procurement is the process of acquiring goods and services\n- It involves planning, sourcing, and contract management\n- Key steps include requirement analysis, supplier selection, and negotiation\n\nSources\n1. Abu Dhabi Procurement Standards.PDF (relevance: 0.71)\n2. Procurement Manual (Business Process).PDF (relevance: 0.69)\n\nProcessed using: retrieval_specialist, response_generator, validator"
-    },
-    "finish_reason": "stop"
-  }],
-  "usage": {
-    "prompt_tokens": 150,
-    "completion_tokens": 85,
-    "total_tokens": 235
-  }
-}
-```
 
 ### Model Information
 
@@ -343,39 +305,11 @@ GET /health
   "service": "agentic-rag-backend",
   "timestamp": "2024-01-01T12:00:00Z"
 }
-```
-
-## Conversation Examples
-
-### Example 1: Follow-up Questions
-
-**User:** "What are the main procurement policies?"
-**Assistant:** *CrewAI agents analyze the question, retrieve relevant documents, and provide detailed procurement policy information*
-
-**User:** "Can you summarize that in 5 bullet points?"
-**Assistant:** *Query Analyzer identifies this as a FOLLOW_UP question, Document Retrieval Specialist searches for procurement summary information, Information Extractor creates 5 bullet points*
-
-### Example 2: Context Switching
-
-**User:** "Tell me about data protection requirements"
-**Assistant:** *CrewAI agents process the new topic and provide data protection information*
-
-**User:** "How does this relate to procurement?"
-**Assistant:** *Query Analyzer identifies the relationship question, agents search for connections between data protection and procurement*
-
-### Example 3: Complex Analysis
-
-**User:** "Compare the approval processes for different procurement amounts"
-**Assistant:** *CrewAI agents perform complex analysis across multiple documents to compare approval processes for different procurement thresholds*
 
 ## Configuration
 
 ### CrewAI Settings
 
-```env
-# CrewAI Configuration
-CREW_VERBOSE=true          # Enable detailed agent logging
-CREW_MEMORY=false          # Disable CrewAI memory (use conversation memory instead)
 
 # Agent Processing
 MAX_ITER=3                 # Maximum agent iterations
@@ -474,7 +408,6 @@ result = await rag_service.chat(
 
 - **Agent Success Rate**: Track which agents complete successfully
 - **Processing Time**: Monitor agent execution times
-- **Fallback Frequency**: Track when CrewAI falls back to other methods
 - **Context Understanding**: Measure conversation context accuracy
 
 ## Troubleshooting
@@ -508,11 +441,10 @@ MEMORY_DEBUG=true
 ## Key Features
 
 1. **CrewAI Primary Processing**: Intelligent multi-agent system for complex queries
-2. **Intelligent Fallback**: Graceful degradation through three processing tiers
-3. **Conversation Memory**: Full context awareness for follow-up questions
-4. **OpenWebUI Integration**: Seamless chat interface with OpenAI API compatibility
-5. **Production Ready**: Comprehensive error handling, logging, and monitoring
-6. **Clean Code**: Professional, symbol-free codebase ready for presentations
+2. **Conversation Memory**: Full conversation context through PgVector DB
+3. **OpenWebUI Integration**: Seamless chat interface with OpenAI API compatibility
+4. **Production Ready**: Comprehensive error handling, logging, and monitoring
+5. **Clean Code**: Professional, symbol-free codebase ready for presentations
 
 ## Integration
 
