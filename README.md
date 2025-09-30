@@ -305,15 +305,6 @@ GET /health
   "service": "agentic-rag-backend",
   "timestamp": "2024-01-01T12:00:00Z"
 }
-
-## Configuration
-
-### CrewAI Settings
-
-
-# Agent Processing
-MAX_ITER=3                 # Maximum agent iterations
-MAX_EXECUTION_TIME=300     # Agent timeout (seconds)
 ```
 
 ### Memory Management
