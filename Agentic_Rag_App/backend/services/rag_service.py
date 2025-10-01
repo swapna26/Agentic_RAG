@@ -421,7 +421,7 @@ class RAGService:
             # Use CrewAI agents
             if self.crew_agents:
                 try:
-                    logger.info("🚀 Starting CrewAI agent processing",
+                    logger.info("Starting CrewAI agent processing",
                                question=question[:50],
                                has_crew_agents=True)
 
@@ -448,7 +448,7 @@ class RAGService:
 CURRENT QUESTION: {question}
 
 Instructions: This question may be related to our previous conversation or it may be completely new. Analyze the context and current question to determine the best approach."""
-                        logger.info("🔗 Adding conversation context to query")
+                        logger.info("Adding conversation context to query")
                     else:
                         # No conversation history available
                         query_to_process = question

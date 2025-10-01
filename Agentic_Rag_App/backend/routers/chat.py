@@ -187,7 +187,7 @@ async def non_stream_chat_response(rag_service, message: str, conversation_histo
         result = await rag_service.chat(actual_message, conversation_history, conversation_id)
 
         # Debug print to see the full result from crew_agents
-        print(f"🚀 DEBUG CHAT.PY - FULL RESULT FROM RAG SERVICE:")
+        print(f"DEBUG CHAT.PY - FULL RESULT FROM RAG SERVICE:")
         import json
         print(json.dumps(result, indent=2, default=str))
         

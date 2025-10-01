@@ -88,18 +88,14 @@ class RAGCrew:
             Args:
                 search_terms: Simple search keywords as a string
             """
-            print(f"🔍 DEBUG LINE 98: search_documents function called with: {search_terms[:100]}")
             try:
-                logger.info("🔍 CREW AI TOOL CALLED: search_documents", search_terms=search_terms[:100], provider=self.config.llm_provider)
-                print(f"🔍 DEBUG LINE 99: Logger info executed")
+                logger.info("Document search initiated", search_terms=search_terms[:100], provider=self.config.llm_provider)
 
                 # Validate we have a proper query string
                 if not search_terms or not search_terms.strip():
-                    print("❌ DEBUG LINE 102: Empty search terms")
                     return "Error: Search query cannot be empty."
 
                 search_query = search_terms.strip()
-                print(f"🔍 DEBUG LINE 106: Search query processed: {search_query}")
 
                 # Check if we got a placeholder description instead of real query
                 placeholder_queries = [
@@ -109,26 +105,17 @@ class RAGCrew:
                     "search"
                 ]
                 if search_query.lower() in [p.lower() for p in placeholder_queries]:
-                    print("❌ DEBUG LINE 115: Placeholder query detected")
                     return "Error: Please provide a specific search query."
 
-                print(f"✅ DEBUG LINE 118: Query validation passed")
-                
-                # Use your RAG service's existing database configuration
+                # Database connection setup
                 DATABASE_URL = self.config.database_url
                 db_url_parts = urlparse(DATABASE_URL)
-                print(f"🔗 DEBUG LINE 122: Database URL: {DATABASE_URL}")
-                print(f"🔗 DEBUG LINE 123: DB Host: {db_url_parts.hostname}, Port: {db_url_parts.port}")
 
-                logger.info("Using RAG service database connection",
+                logger.info("Database connection established",
                            host=db_url_parts.hostname,
-                           port=db_url_parts.port,
-                           database=db_url_parts.path.lstrip('/'),
-                           user=db_url_parts.username)
-                print(f"🔗 DEBUG LINE 130: Logger database info executed")
+                           database=db_url_parts.path.lstrip('/'))
                 
-                # Initialize the vector store with your configuration
-                print(f"🗄️ DEBUG LINE 131: Creating vector store with table: embeddings_gemini")
+                # Initialize vector store
                 vector_store = PGVectorStore.from_params(
                     host=db_url_parts.hostname,
                     port=db_url_parts.port,
@@ -138,68 +125,68 @@ class RAGCrew:
                     table_name="embeddings_gemini",
                     embed_dim=768,  # Match the actual database embedding dimensions
                 )
-                print(f"✅ DEBUG LINE 140: Vector store created successfully")
+                print(f"DEBUG: Vector store created successfully")
 
                 # Initialize embedding model based on provider
-                print(f"🤖 DEBUG LINE 142: LLM Provider: {self.config.llm_provider}")
+                print(f"DEBUG: LLM Provider: {self.config.llm_provider}")
                 if self.config.llm_provider == 'gemini':
-                    print(f"🤖 DEBUG LINE 144: Creating Gemini embedding model: {self.config.gemini_embedding_model}")
+                    print(f"DEBUG: Creating Gemini embedding model: {self.config.gemini_embedding_model}")
                     embed_model = GeminiEmbedding(
                         model_name=self.config.gemini_embedding_model,
                         api_key=self.config.gemini_api_key,
                     )
                     logger.info("Using Gemini embedding model for document retrieval")
-                    print(f"✅ DEBUG LINE 150: Gemini embedding model created")
+                    print(f"DEBUG: Gemini embedding model created")
                 else:
-                    print(f"🤖 DEBUG LINE 152: Creating Ollama embedding model: {self.config.ollama_embedding_model}")
+                    print(f"DEBUG: Creating Ollama embedding model: {self.config.ollama_embedding_model}")
                     embed_model = OllamaEmbedding(
                         model_name=self.config.ollama_embedding_model,
                         base_url=self.config.ollama_base_url,
                     )
                     logger.info("Using Ollama embedding model for document retrieval")
-                    print(f"✅ DEBUG LINE 158: Ollama embedding model created")
+                    print(f"DEBUG: Ollama embedding model created")
 
                 # Create a LlamaIndex VectorStoreIndex object from the vector store
-                print(f"📚 DEBUG LINE 163: Creating VectorStoreIndex from vector store")
+                print(f"DEBUG: Creating VectorStoreIndex from vector store")
                 index = VectorStoreIndex.from_vector_store(
                     vector_store=vector_store,
                     embed_model=embed_model
                 )
-                print(f"✅ DEBUG LINE 167: VectorStoreIndex created successfully")
+                print(f"DEBUG: VectorStoreIndex created successfully")
 
-                print(f"🔍 DEBUG LINE 169: Creating retriever with top_k={self.config.similarity_top_k}")
+                print(f"DEBUG: Creating retriever with top_k={self.config.similarity_top_k}")
                 retriever = index.as_retriever(
                     similarity_top_k=self.config.similarity_top_k,
                     verbose=False  # Turn off verbose to prevent tool output leakage
                 )
-                print(f"✅ DEBUG LINE 173: Retriever created successfully")
+                print(f"DEBUG: Retriever created successfully")
 
                 # Query the index to retrieve nodes directly
-                print(f"📊 DEBUG LINE 175: About to query vector database with: '{search_query}'")
-                logger.info("📊 Querying vector database", query=search_query, table_suffix="gemini" if self.config.llm_provider == 'gemini' else "ollama")
+                print(f"DEBUG: About to query vector database with: '{search_query}'")
+                logger.info("Querying vector database", query=search_query, table_suffix="gemini" if self.config.llm_provider == 'gemini' else "ollama")
                 retrieved_nodes = retriever.retrieve(search_query)
                 self.last_retrieved_nodes = retrieved_nodes  # Store for source extraction
-                print(f"✅ DEBUG LINE 178: Retrieved {len(retrieved_nodes)} nodes from database")
+                print(f"DEBUG: Retrieved {len(retrieved_nodes)} nodes from database")
 
                 # Print detailed info about each retrieved node
                 for i, node in enumerate(retrieved_nodes):
                     score = getattr(node, 'score', 0.0)
                     content_preview = node.text[:200] + "..." if len(node.text) > 200 else node.text
                     source_info = node.metadata.get('filename', 'Unknown') if hasattr(node, 'metadata') and node.metadata else 'No metadata'
-                    print(f"📄 DEBUG NODE {i+1}: Score={score:.3f}, Source={source_info}")
-                    print(f"📄 DEBUG CONTENT {i+1}: {content_preview}")
+                    print(f"DEBUG NODE {i+1}: Score={score:.3f}, Source={source_info}")
+                    print(f"DEBUG CONTENT {i+1}: {content_preview}")
                     print("---")
-                logger.info("✅ Database retrieval completed", num_results=len(retrieved_nodes), has_results=len(retrieved_nodes) > 0)
+                logger.info("Database retrieval completed", num_results=len(retrieved_nodes), has_results=len(retrieved_nodes) > 0)
 
                 if not retrieved_nodes:
-                    print(f"❌ DEBUG LINE 181: No nodes retrieved, returning error message")
+                    print(f"DEBUG: No nodes retrieved, returning error message")
                     return f"No relevant documents found for query: '{search_query}'. Please try different keywords or check if documents are properly indexed."
                 
                 # Format the retrieved context with source metadata - Keep concise for Gemma2:1b
-                print(f"📝 DEBUG LINE 197: Starting to format {len(retrieved_nodes)} retrieved chunks")
+                print(f"DEBUG: Starting to format {len(retrieved_nodes)} retrieved chunks")
                 formatted_chunks = []
                 for i, node in enumerate(retrieved_nodes, 1):
-                    print(f"📝 DEBUG CHUNK {i}: Processing node with {len(node.text)} characters")
+                    print(f"DEBUG CHUNK {i}: Processing node with {len(node.text)} characters")
                     content = node.text[:800]  # Limit content size
 
                     # Extract source file information from metadata
@@ -207,16 +194,16 @@ class RAGCrew:
                     page_info = ""
 
                     if hasattr(node, 'metadata') and node.metadata:
-                        print(f"📝 DEBUG CHUNK {i}: Node has metadata: {list(node.metadata.keys())}")
+                        print(f"DEBUG CHUNK {i}: Node has metadata: {list(node.metadata.keys())}")
                         file_name = node.metadata.get('filename', 'Unknown file')
                         source_info = f"Source: {file_name}"
-                        print(f"📝 DEBUG CHUNK {i}: Source info: {source_info}")
+                        print(f"DEBUG CHUNK {i}: Source info: {source_info}")
 
                         page_num = node.metadata.get('page_label', '')
                         if page_num:
                             page_info = f" (Page {page_num})"
                     else:
-                        print(f"📝 DEBUG CHUNK {i}: Node has NO metadata")
+                        print(f"DEBUG CHUNK {i}: Node has NO metadata")
 
                     score = getattr(node, 'score', 0.0)
                     formatted_chunk = f"""DOCUMENT {i}:
@@ -225,16 +212,16 @@ Content: {content}
 
 """
                     formatted_chunks.append(formatted_chunk)
-                    print(f"📝 DEBUG CHUNK {i}: Formatted chunk length: {len(formatted_chunk)}")
+                    print(f"DEBUG CHUNK {i}: Formatted chunk length: {len(formatted_chunk)}")
 
                 # Limit total response size for smaller model
                 context = "\n".join(formatted_chunks)[:4000]
-                print(f"📝 DEBUG LINE 223: Final context length: {len(context)} characters")
-                print(f"📝 DEBUG CONTEXT PREVIEW:")
+                print(f"DEBUG: Final context length: {len(context)} characters")
+                print(f"DEBUG CONTEXT PREVIEW:")
                 print(f"=== CONTEXT START ===")
                 print(context[:500] + "..." if len(context) > 500 else context)
                 print(f"=== CONTEXT END ===")
-                print(f"📝 DEBUG LINE 227: About to return context to CrewAI")
+                print(f"DEBUG: About to return context to CrewAI")
                 
                 return context
                 
@@ -356,35 +343,35 @@ Content: {content}
                        has_context="CONVERSATION CONTEXT:" in query)
 
             # Create crew for query processing
-            print(f"🚀 DEBUG LINE 384: Creating crew for query: '{query[:50]}...'")
+            print(f"DEBUG: Creating crew for query: '{query[:50]}...'")
             crew = self.create_crew(query)
             logger.info("CrewAI agents initialized", agent_count=len(crew.agents))
-            print(f"🚀 DEBUG LINE 386: Crew created with {len(crew.agents)} agents")
+            print(f"DEBUG: Crew created with {len(crew.agents)} agents")
 
             # Execute the crew workflow
-            logger.info("🚀 STARTING CrewAI multi-agent workflow", provider=self.config.llm_provider)
-            print(f"🚀 DEBUG LINE 389: Starting crew.kickoff() execution...")
+            logger.info("STARTING CrewAI multi-agent workflow", provider=self.config.llm_provider)
+            print(f"DEBUG: Starting crew.kickoff() execution...")
             result = crew.kickoff()
-            print(f"🚀 DEBUG LINE 391: Crew execution completed!")
-            print(f"🚀 DEBUG RESULT TYPE: {type(result)}")
-            logger.info("🎯 CrewAI workflow completed successfully")
+            print(f"DEBUG: Crew execution completed!")
+            print(f"DEBUG RESULT TYPE: {type(result)}")
+            logger.info("CrewAI workflow completed successfully")
 
             # Extract ONLY the final task's output, not the entire workflow
-            print(f"🚀 DEBUG LINE 394: Extracting output from result...")
+            print(f"DEBUG: Extracting output from result...")
             if hasattr(result, 'tasks_output') and result.tasks_output:
-                print(f"🚀 DEBUG: Found tasks_output with {len(result.tasks_output)} tasks")
+                print(f"DEBUG: Found tasks_output with {len(result.tasks_output)} tasks")
                 # Get the last task's output (response_task)
                 raw_output = str(result.tasks_output[-1].raw)
-                print(f"🚀 DEBUG: Using last task output")
+                print(f"DEBUG: Using last task output")
             elif hasattr(result, 'raw'):
-                print(f"🚀 DEBUG: Using result.raw")
+                print(f"DEBUG: Using result.raw")
                 raw_output = str(result.raw)
             else:
-                print(f"🚀 DEBUG: Using str(result)")
+                print(f"DEBUG: Using str(result)")
                 raw_output = str(result)
 
-            print(f"🚀 DEBUG RAW OUTPUT LENGTH: {len(raw_output)}")
-            print(f"🚀 DEBUG RAW OUTPUT PREVIEW:")
+            print(f"DEBUG RAW OUTPUT LENGTH: {len(raw_output)}")
+            print(f"DEBUG RAW OUTPUT PREVIEW:")
             print("=== RAW OUTPUT START ===")
             print(raw_output[:1000] + "..." if len(raw_output) > 1000 else raw_output)
             print("=== RAW OUTPUT END ===")
@@ -394,7 +381,7 @@ Content: {content}
             # Clean the CrewAI response as fallback
             # crew_ai_response = self._clean_response(raw_output, query)  # Commented out to see raw chunks with scores
             crew_ai_response = raw_output
-            print(f"🚀 DEBUG: Setting crew_ai_response = raw_output")
+            print(f"DEBUG: Setting crew_ai_response = raw_output")
 
             # DISABLED: Context summary generation - using only tool calling now
             # intelligent_response, sources = self._generate_summary_from_context(query)
@@ -404,7 +391,7 @@ Content: {content}
             # Extract unique sources from the last retrieved nodes
             sources = []
             if hasattr(self, 'last_retrieved_nodes') and self.last_retrieved_nodes:
-                print(f"🚀 DEBUG EXTRACTING SOURCES FROM {len(self.last_retrieved_nodes)} NODES")
+                print(f"DEBUG EXTRACTING SOURCES FROM {len(self.last_retrieved_nodes)} NODES")
                 seen_files = set()
                 for node in self.last_retrieved_nodes:
                     if hasattr(node, 'metadata') and node.metadata:
@@ -415,12 +402,12 @@ Content: {content}
                                 "score": float(getattr(node, 'score', 0.0))
                             })
                             seen_files.add(filename)
-                            print(f"🚀 DEBUG ADDED SOURCE: {filename}")
-                print(f"🚀 DEBUG TOTAL UNIQUE SOURCES: {len(sources)}")
+                            print(f"DEBUG ADDED SOURCE: {filename}")
+                print(f"DEBUG TOTAL UNIQUE SOURCES: {len(sources)}")
             else:
-                print("🚀 DEBUG NO RETRIEVED NODES FOR SOURCES")
-            print(f"🚀 DEBUG FINAL RESPONSE LENGTH: {len(final_response)}")
-            print(f"🚀 DEBUG FINAL RESPONSE PREVIEW:")
+                print("DEBUG NO RETRIEVED NODES FOR SOURCES")
+            print(f"DEBUG FINAL RESPONSE LENGTH: {len(final_response)}")
+            print(f"DEBUG FINAL RESPONSE PREVIEW:")
             print("=== FINAL RESPONSE START ===")
             print(final_response[:500] + "..." if len(final_response) > 500 else final_response)
             print("=== FINAL RESPONSE END ===")
