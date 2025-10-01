@@ -185,6 +185,11 @@ async def non_stream_chat_response(rag_service, message: str, conversation_histo
 
         # Pass conversation history to the RAG service for context
         result = await rag_service.chat(actual_message, conversation_history, conversation_id)
+
+        # Debug print to see the full result from crew_agents
+        print(f"🚀 DEBUG CHAT.PY - FULL RESULT FROM RAG SERVICE:")
+        import json
+        print(json.dumps(result, indent=2, default=str))
         
         # Format response with sources as context
         response_content = result["response"]
@@ -206,7 +211,7 @@ async def non_stream_chat_response(rag_service, message: str, conversation_histo
                 elif metadata is None:
                     metadata = {}
 
-                doc_name = metadata.get("file_name") or metadata.get("filename") or metadata.get("source_document") or metadata.get("source_file") or f"Document {i}"
+                doc_name = source.get("filename") or metadata.get("filename") or metadata.get("file_name") or metadata.get("source_document") or metadata.get("source_file") or f"Document {i}"
                 score = source.get("score", 0.0)
                 response_content += f"\n{i}. {doc_name} (relevance: {score:.2f})"
         

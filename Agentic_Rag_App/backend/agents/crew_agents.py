@@ -66,7 +66,7 @@ class RAGCrew:
                 api_key=self.config.gemini_api_key,
                 temperature=0.0,
                 max_tokens=2000,
-                timeout=30
+                timeout=120
             )
         else:  # Default to Ollama
             logger.info("Configuring Ollama LLM for CrewAI agents")
@@ -75,7 +75,7 @@ class RAGCrew:
                 api_base=self.config.ollama_base_url,
                 temperature=0.0,
                 max_tokens=2000,
-                timeout=30
+                timeout=120
             )
 
     def _create_document_retrieval_tool(self):
@@ -275,24 +275,7 @@ Content: {content}
         self.retrieval_agent = Agent(
             role="Document Retrieval Specialist",
             goal="Find relevant documents from the knowledge base for each specific query",
-            backstory="""You are a document search specialist. CRITICAL RULES:
-
-            FOLLOW-UP QUESTIONS (like "list in X points", "summarize", "tell me more"):
-            - DO NOT search documents again
-            - Return message: "Follow-up question detected - using previous documents"
-
-            NEW TOPIC QUESTIONS:
-            - ALWAYS search for new documents based on question topic
-            - Identify domain and search accordingly:
-              * HR/employment questions ("penalties", "disciplinary", "violations", "infringements", "employee", "HR laws", "article") → Search "HR bylaws disciplinary penalties violations"
-              * Procurement questions ("RFP", "RFQ", "tendering", "suppliers", "procurement") → Search "procurement tendering"
-              * Security questions ("NIST", "security", "annex") → Search "information security"
-
-            TOPIC SWITCHING:
-            - If current question is completely different topic from conversation context, ignore previous context
-            - Focus ONLY on current question topic
-
-            Always use Search Documents tool with specific domain keywords.""",
+            backstory="You are a document search specialist. For each question, search for relevant documents using appropriate keywords based on the topic. Use the Search Documents tool to find information that matches the user's query.",
             tools=[retrieval_tool],
             llm=self.llm,
             verbose=False,
@@ -319,17 +302,7 @@ Content: {content}
 
         # Task 1: Find relevant documents
         retrieval_task = Task(
-            description=f"""Find relevant documents for this query: {query}
-
-            IMPORTANT - Domain Recognition:
-            1. If query contains CONVERSATION CONTEXT, use the context to understand the topic
-            2. For new questions, identify the domain:
-               - HR/Personnel questions (penalties, disciplinary, violations, infringements, employee rights, disciplinary actions) → Use "HR bylaws disciplinary penalties violations" search terms
-               - Procurement questions (tendering, suppliers, sourcing, procurement, RFP, RFQ) → Use "procurement tendering" search terms
-               - Security questions → Use "security" search terms
-            3. Use domain-appropriate keywords in your search
-
-            Use the Search Documents tool with the right domain keywords to find relevant information.""",
+            description=f"Find relevant documents for this query: {query}. Use the Search Documents tool with appropriate keywords to locate information that answers the user's question.",
             agent=self.retrieval_agent,
             expected_output="Documents from the correct domain/subject area"
         )
